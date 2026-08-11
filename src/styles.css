@@ -588,6 +588,51 @@ button.ghost.sell.wide { width: 100%; flex: none; }
   font-family: var(--mono); margin-top: 6px; font-variant-numeric: tabular-nums;
 }
 
+/* Research */
+.intel-bar {
+  display: flex; align-items: baseline; gap: 9px;
+  background: #191b11; border-left: 3px solid var(--hazard);
+  padding: 10px 14px; margin: 4px 0 14px;
+}
+.intel-n {
+  font-family: var(--mono); font-size: 24px; font-weight: 500;
+  color: var(--hazard); font-variant-numeric: tabular-nums;
+}
+.intel-l {
+  font-family: var(--display); font-weight: 800; font-size: var(--t-fine);
+  letter-spacing: .18em; text-transform: uppercase; color: var(--muted);
+}
+
+.rs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin: 14px 0 4px; }
+.rs {
+  background: #191b11; border: 1px solid var(--rule);
+  border-top: 2px solid var(--rule); padding: 10px;
+}
+.rs.maxed { border-top-color: var(--drab); }
+.rs-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rs-name {
+  font-family: var(--display); font-weight: 800; font-size: var(--t-base);
+  letter-spacing: .08em; text-transform: uppercase;
+}
+.rs-pips { display: flex; gap: 3px; flex: 0 0 auto; }
+.pip { width: 7px; height: 7px; background: var(--rule); display: block; }
+.pip.on { background: var(--hazard); }
+.rs.maxed .pip.on { background: var(--drab-ink); }
+.rs-blurb { font-size: var(--t-micro); color: var(--muted); line-height: 1.5; margin: 5px 0 8px; min-height: 30px; }
+.rs-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rs-now {
+  font-family: var(--mono); font-size: var(--t-micro);
+  color: var(--drab-ink); font-variant-numeric: tabular-nums;
+}
+.rs-buy {
+  background: var(--crate-hi); border: 1px solid var(--hazard-dim);
+  color: var(--hazard); padding: 5px 10px;
+  font-family: var(--mono); font-size: var(--t-micro); font-weight: 500;
+  transition: background .12s, border-color .12s;
+}
+.rs-buy:hover:not(:disabled) { background: #33260f; border-color: var(--hazard); }
+.rs-buy:disabled { opacity: .32; cursor: not-allowed; border-color: var(--rule); color: var(--muted); }
+
 .score-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px; margin: 16px 0; }
 .score-item {
   display: flex; justify-content: space-between; gap: 10px;
@@ -644,6 +689,10 @@ kbd {
 
   .diff-row { grid-template-columns: 1fr; }
   .score-grid { grid-template-columns: 1fr; }
+  .rs-grid { grid-template-columns: 1fr; }
+  .rs-blurb { min-height: 0; }
+  #abilities { bottom: 8px; gap: 4px; }
+  .ab { width: 68px; padding: 11px 0 9px; }
   .overlay-card { padding: 0 18px 20px; }
   .overlay-card::before { margin: 0 -18px 20px; }
   .overlay-card h1 { font-size: 24px; }

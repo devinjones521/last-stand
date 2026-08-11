@@ -11,6 +11,7 @@ import {
 import { TOWER_DEFS, towerStats, nextUpgradeCost } from './towers.js';
 import { ENEMY_DEFS, scaleEnemy } from './enemies.js';
 import { buildWave, waveClearBonus } from './waves.js';
+import { loadResearch, researchMods, intelForRun, saveResearch } from './research.js';
 
 const CELL = GRID.cell;
 const SAVE_KEY = 'laststand.save.v1';
@@ -46,6 +47,10 @@ export class Game {
 
   reset(difficulty = this.balance?.difficulty ?? 'standard') {
     this.balance = balanceFor(difficulty);
+    // Permanent research is re-read at the start of every run, so anything
+    // bought on the game-over screen applies immediately to the next one.
+    this.research = loadResearch();
+    this.mods = researchMods(this.research);
     // Bumped on every reset so the renderer knows to wipe its decal layer.
     this.epoch = (this.epoch ?? 0) + 1;
     // Bumped whenever the set of towers changes, so the renderer knows when to
@@ -73,9 +78,9 @@ export class Game {
     this.overchargeUntil = -1;
     this.overcharge = null;
 
-    this.cash = this.balance.startCash;
-    this.baseHp = this.balance.startBaseHp;
-    this.maxBaseHp = this.balance.maxBaseHp;
+    this.cash = this.balance.startCash + this.mods.startCash;
+    this.maxBaseHp = this.balance.maxBaseHp + this.mods.maxBaseHp;
+    this.baseHp = this.balance.startBaseHp + this.mods.maxBaseHp;
     this.wave = 0;            // last wave STARTED
     this.clock = 0;
     this.repairsBought = 0;
@@ -87,7 +92,7 @@ export class Game {
     // Game feel: a brief total freeze on heavy impacts, and a camera punch.
     this.hitStop = 0;
     this.punch = 0;
-    this.stats = { kills: 0, leaked: 0, earned: 0, spent: 0, bestWave: 0 };
+    this.stats = { kills: 0, leaked: 0, earned: 0, spent: 0, bestWave: 0, bossKills: 0 };
 
     this.rebuild();
   }
@@ -130,6 +135,25 @@ export class Game {
     } else {
       e.tx = e.cx; e.ty = e.cy;
     }
+  }
+
+  /**
+   * Tower stats with permanent research folded in. Everything — simulation, UI
+   * and renderer — must go through this so the numbers on screen are the ones
+   * actually being used.
+   */
+  statsFor(defId, level, branch = null) {
+    const s = towerStats(defId, level, branch);
+    const m = this.mods;
+    if (s.damage) s.damage *= m.damage;
+    if (s.fireRate) s.fireRate *= m.fireRate;
+    if (s.range) s.range *= m.range;
+    // Damage-over-time is derived from base damage inside towerStats, so it has
+    // to be scaled here too or research would quietly skip it.
+    if (s.burn) s.burn.dps *= m.damage;
+    if (s.acidDot) s.acidDot.dps *= m.damage;
+    if (s.puddle) s.puddle.dps *= m.damage;
+    return s;
   }
 
   cellOf(px, py) {
@@ -215,7 +239,7 @@ export class Game {
       damageDealt: 0,
       kills: 0,
       recoil: 0,
-      stats: towerStats(defId, 1, null),
+      stats: this.statsFor(defId, 1, null),
     };
     this.towers.push(tower);
     this.towerAt[idx(x, y)] = tower;
@@ -240,7 +264,8 @@ export class Game {
   }
 
   upgradeCostFor(tower) {
-    return nextUpgradeCost(tower.defId, tower.level);
+    const base = nextUpgradeCost(tower.defId, tower.level);
+    return base === null ? null : Math.max(1, Math.round(base * this.mods.upgradeCost));
   }
 
   /** Level 4 requires picking a branch; pass its id. */
@@ -262,7 +287,7 @@ export class Game {
     this.stats.spent += cost;
     tower.invested += cost;
     tower.level += 1;
-    tower.stats = towerStats(tower.defId, tower.level, tower.branch);
+    tower.stats = this.statsFor(tower.defId, tower.level, tower.branch);
     this.buildVersion++;
     this.audio?.play('upgrade');
     return { ok: true };
@@ -375,6 +400,12 @@ export class Game {
     return Math.max(0, (this.abilityReadyAt[id] ?? 0) - this.clock);
   }
 
+  /** Full cooldown for an ability, after research. Drives the UI sweep. */
+  abilityCooldownTotal(id) {
+    const def = this.abilityDef(id);
+    return def ? def.cooldown * this.mods.abilityCd : 1;
+  }
+
   /**
    * Fire a commander ability. `cell` is required for targeted ones.
    * These never cost scrap - only time.
@@ -439,7 +470,7 @@ export class Game {
         return { ok: false, reason: 'Unknown ability' };
     }
 
-    this.abilityReadyAt[id] = this.clock + def.cooldown;
+    this.abilityReadyAt[id] = this.clock + def.cooldown * this.mods.abilityCd;
     return { ok: true, def };
   }
 
@@ -537,9 +568,11 @@ export class Game {
   kill(e) {
     if (e.dead) return;
     e.dead = true;
-    this.cash += e.reward;
-    this.stats.earned += e.reward;
+    const payout = Math.max(1, Math.round(e.reward * this.mods.killReward));
+    this.cash += payout;
+    this.stats.earned += payout;
     this.stats.kills += 1;
+    if (e.def.traits?.boss) this.stats.bossKills += 1;
 
     this.spawnBlood(e.x, e.y, e.def.traits?.boss ? 26 : 8, e.def.shade);
     this.pushDecal('blood', e.x, e.y, e.radius * (e.def.traits?.boss ? 2.1 : 1.15), e.def.shade);
@@ -1273,7 +1306,7 @@ export class Game {
       const bonus = waveClearBonus(w.num, this.balance);
       const interest = Math.min(
         this.balance.interestCap,
-        Math.floor(this.cash * this.balance.interestRate),
+        Math.floor(this.cash * (this.balance.interestRate + this.mods.interest)),
       );
       this.cash += bonus + interest;
       this.stats.earned += bonus + interest;
@@ -1329,7 +1362,7 @@ export class Game {
         target: t.m ?? 'first',
         cooldown: 0, angle: 0, spin: 0, ref: null,
         damageDealt: t.dd ?? 0, kills: t.k ?? 0, recoil: 0,
-        stats: towerStats(t.d, t.l, t.b),
+        stats: this.statsFor(t.d, t.l, t.b),
       };
       this.towers.push(tower);
       this.towerAt[idx(t.x, t.y)] = tower;
@@ -1363,6 +1396,23 @@ export class Game {
     try {
       return JSON.parse(localStorage.getItem(RECORDS_KEY) ?? '{}') ?? {};
     } catch { return {}; }
+  }
+
+  /**
+   * Pay out intel for a finished run and bank it. Always awards something —
+   * a bad run still moves the research tree forward.
+   */
+  bankIntel() {
+    const cleared = Math.max(0, this.wave - 1);
+    const gained = intelForRun({
+      wavesCleared: cleared,
+      kills: this.stats.kills,
+      bossKills: this.stats.bossKills ?? 0,
+      difficulty: this.balance.difficulty,
+    });
+    this.research.intel += gained;
+    saveResearch(this.research);
+    return gained;
   }
 
   /** Bank the finished run. Returns true if it beat the previous best. */

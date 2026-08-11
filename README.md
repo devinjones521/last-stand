@@ -103,6 +103,21 @@ field applies to them — falling back to the camp field where the flare isn't
 reachable, so nothing can ever be stranded. Since towers are walls, a
 well-placed flare can walk the horde through your whole maze twice.
 
+### Research (meta-progression)
+
+![Research tree](docs/research.jpg)
+
+Every finished run banks **intel** — win or lose, you always earn something.
+Intel buys permanent research across nine tracks that applies to every future
+run: tower damage, fire rate, range, starting scrap, camp integrity, kill
+payouts, interest, ability cooldowns and upgrade costs.
+
+The design rule is that research is **purely additive**. A player with no
+research gets exactly the balance the game shipped with — nothing was nerfed to
+justify a tree, and nothing is ever lost. Measured by the test suite: an
+identical build reaches **wave 29 with no research and wave 44 fully maxed**, and
+a wave-40 run banks ~150 intel against a first node level costing 30–55.
+
 ### Difficulty
 
 Picked per run on the title screen. The whole curve moves together — enemy HP,

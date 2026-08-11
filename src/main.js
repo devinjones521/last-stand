@@ -6,6 +6,7 @@ import { CANVAS_W, CANVAS_H, GRID, COLORS, DIFFICULTIES, ABILITIES } from './con
 import { TOWER_ORDER } from './towers.js';
 import { idx } from './pathfinding.js';
 import { Game } from './game.js';
+import { buyNode, researchMods } from './research.js';
 import { Renderer } from './render.js';
 import { UI } from './ui.js';
 import { Audio } from './audio.js';
@@ -28,6 +29,8 @@ const view = {
 
 /** Difficulty picked on the title screen; applied when a new run starts. */
 let chosenDifficulty = 'standard';
+/** Whether the research screen was opened from game-over (changes its exit). */
+let researchFromGameOver = false;
 
 const renderer = new Renderer(canvas, game);
 const ui = new UI(game, view, audio);
@@ -338,6 +341,22 @@ document.getElementById('overlay-card').addEventListener('click', (ev) => {
     return;
   }
 
+  // Buying research re-renders the screen in place so you can spend a run's
+  // intel across several nodes without bouncing in and out.
+  const buy = ev.target.closest('[data-research]');
+  if (buy) {
+    audio.init();
+    const res = buyNode(game.research, buy.dataset.research);
+    if (res.ok) {
+      game.mods = researchMods(game.research);
+      audio.play('upgrade');
+    } else {
+      audio.play('deny');
+    }
+    ui.showResearch(researchFromGameOver);
+    return;
+  }
+
   const btn = ev.target.closest('[data-act]');
   if (!btn) return;
   audio.init();
@@ -372,6 +391,17 @@ document.getElementById('overlay-card').addEventListener('click', (ev) => {
     }
     case 'help':
       ui.showHelp();
+      break;
+    case 'research':
+      researchFromGameOver = false;
+      ui.showResearch(false);
+      break;
+    case 'research-over':
+      researchFromGameOver = true;
+      ui.showResearch(true);
+      break;
+    case 'close-research':
+      ui.showTitle(!!Game.readSave(), Game.readRecords(), chosenDifficulty);
       break;
     case 'restart':
       game.reset();
@@ -424,7 +454,8 @@ function frame(now) {
   }
   if (game.phase === 'over' && prevPhase !== 'over') {
     const record = game.recordRun();
-    ui.showGameOver(record);
+    const intel = game.bankIntel();
+    ui.showGameOver(record, intel);
     Game.clearSave();
   }
   prevPhase = game.phase;

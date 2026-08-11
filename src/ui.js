@@ -4,6 +4,7 @@
 // ---------------------------------------------------------------------------
 
 import { TARGET_MODES, DIFFICULTIES, DIFFICULTY_ORDER, ABILITIES } from './config.js';
+import { RESEARCH, nodeCost } from './research.js';
 import { TOWER_DEFS, TOWER_ORDER, towerStats, towerTitle, nextUpgradeCost } from './towers.js';
 import { ENEMY_DEFS } from './enemies.js';
 
@@ -111,9 +112,8 @@ export class UI {
     const g = this.game;
     for (const el of document.querySelectorAll('.ab')) {
       const id = el.dataset.id;
-      const def = g.abilityDef(id);
       const left = g.abilityCooldownLeft(id);
-      const frac = left > 0 ? left / def.cooldown : 0;
+      const frac = left > 0 ? left / g.abilityCooldownTotal(id) : 0;
 
       el.classList.toggle('cooling', left > 0);
       el.classList.toggle('aiming', this.view.aiming === id);
@@ -156,7 +156,7 @@ export class UI {
     v.buildId = v.buildId === id ? null : id;
     v.selected = null;
     v.aiming = null;
-    v.buildStats = v.buildId ? towerStats(v.buildId, 1, null) : null;
+    v.buildStats = v.buildId ? this.game.statsFor(v.buildId, 1, null) : null;
     this.audio.play('ui');
     this.refresh(true);
   }
@@ -279,7 +279,7 @@ export class UI {
     // Upgrade / repair buttons live in rebuilt panels, so just re-render them.
     const up = $('#btn-upgrade');
     if (up && !up.dataset.placeholder && this.view.selected) {
-      const cost = nextUpgradeCost(this.view.selected.defId, this.view.selected.level);
+      const cost = this.game.upgradeCostFor(this.view.selected);
       up.disabled = cost === null || cash < cost;
     }
     document.querySelectorAll('.branch').forEach((b) => {
@@ -352,7 +352,7 @@ export class UI {
 
   previewCard(id) {
     const def = TOWER_DEFS[id];
-    const s = towerStats(id, 1, null);
+    const s = this.game.statsFor(id, 1, null);
     const wrap = document.createElement('div');
     wrap.innerHTML = `
       <div class="d-head"><span class="d-name">${def.name}</span>
@@ -367,10 +367,10 @@ export class UI {
   towerCard(t) {
     const def = TOWER_DEFS[t.defId];
     const s = t.stats;
-    const cost = nextUpgradeCost(t.defId, t.level);
+    const cost = this.game.upgradeCostFor(t);
     const maxed = cost === null;
     const needsBranch = def.branches && t.level + 1 === 4 && !t.branch;
-    const nextStats = maxed ? null : towerStats(t.defId, t.level + 1, t.branch);
+    const nextStats = maxed ? null : this.game.statsFor(t.defId, t.level + 1, t.branch);
 
     const wrap = document.createElement('div');
     const levelDesc = def.levelDesc?.[t.level - 1];
@@ -556,7 +556,52 @@ export class UI {
       <div class="overlay-actions">
         <button class="go" data-act="new">New Run</button>
         ${hasSave ? '<button data-act="continue">Continue Run</button>' : ''}
+        <button data-act="research">Research${this.game.research.intel > 0 ? ` · ${this.game.research.intel}` : ''}</button>
         <button data-act="help">Controls</button>
+      </div>`);
+  }
+
+  /** Permanent research. Reachable from the title and the game-over screen. */
+  showResearch(fromGameOver = false) {
+    const state = this.game.research;
+    const rows = RESEARCH.map((node) => {
+      const owned = state.levels[node.id] ?? 0;
+      const cost = nodeCost(node, owned);
+      const maxed = cost === null;
+      const afford = !maxed && state.intel >= cost;
+      const pips = Array.from({ length: node.max }, (_, i) =>
+        `<i class="pip${i < owned ? ' on' : ''}"></i>`).join('');
+
+      return `<div class="rs${maxed ? ' maxed' : ''}">
+        <div class="rs-top">
+          <span class="rs-name">${node.name}</span>
+          <span class="rs-pips">${pips}</span>
+        </div>
+        <div class="rs-blurb">${node.blurb}</div>
+        <div class="rs-foot">
+          <span class="rs-now">${owned ? node.unit(owned) : '—'}</span>
+          <button class="rs-buy" data-research="${node.id}" ${maxed || !afford ? 'disabled' : ''}>
+            ${maxed ? 'MAXED' : `${cost} intel`}
+          </button>
+        </div>
+      </div>`;
+    }).join('');
+
+    this.showOverlay(`
+      <h1>RESEARCH</h1>
+      <div class="sub">Permanent · applies to every future run</div>
+      <div class="intel-bar">
+        <span class="intel-n">${state.intel.toLocaleString()}</span>
+        <span class="intel-l">intel banked</span>
+      </div>
+      <p style="margin-top:0">Every run banks intel, win or lose. Research is
+      <b>purely additive</b> — nothing here is ever spent from your scrap, and
+      nothing is ever lost.</p>
+      <div class="rs-grid">${rows}</div>
+      <div class="overlay-actions">
+        <button class="go" data-act="${fromGameOver ? 'title' : 'close-research'}">
+          ${fromGameOver ? 'Back to Title' : 'Done'}
+        </button>
       </div>`);
   }
 
@@ -595,7 +640,7 @@ export class UI {
       </div>`);
   }
 
-  showGameOver(record) {
+  showGameOver(record, intelGained = 0) {
     const s = this.game.stats;
     const best = this.game.towers.length
       ? [...this.game.towers].sort((a, b) => b.damageDealt - a.damageDealt)[0]
@@ -622,6 +667,14 @@ export class UI {
         <div class="score-item"><span>Scrap spent</span><span>$${Math.round(s.spent).toLocaleString()}</span></div>
         <div class="score-item"><span>Towers standing</span><span>${this.game.towers.length}</span></div>
       </div>
-      <div class="overlay-actions"><button class="go" data-act="new">New Run</button></div>`);
+      <div class="promise" style="border-left-color:var(--drab)">
+        <b>+${intelGained} intel</b> banked from this run — you now have
+        <b>${this.game.research.intel}</b>. Spend it on permanent research that
+        applies to every run from here.
+      </div>
+      <div class="overlay-actions">
+        <button class="go" data-act="research-over">Spend Intel</button>
+        <button data-act="new">New Run</button>
+      </div>`);
   }
 }

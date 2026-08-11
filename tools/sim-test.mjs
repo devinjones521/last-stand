@@ -466,6 +466,134 @@ console.log('\n--- 17. game feel stays cosmetic ---');
   check('a huge hit stop still drains', g3.hitStop < 999);
 }
 
+console.log('\n--- 18. research meta-progression ---');
+{
+  const R = await import(B + 'research.js');
+
+  // Node maths
+  let bad = 0;
+  for (const n of R.RESEARCH) {
+    if (R.nodeCost(n, n.max) !== null) bad++;
+    if (R.nodeCost(n, 0) !== n.base) bad++;
+    if (R.nodeCost(n, 1) <= R.nodeCost(n, 0)) bad++;
+  }
+  check('costs escalate and cap out', bad === 0, `${bad} problems`);
+  check('unique research ids', new Set(R.RESEARCH.map((n) => n.id)).size === R.RESEARCH.length);
+
+  // A fresh player must get exactly the shipped balance.
+  const zero = R.researchMods({ intel: 0, levels: {} });
+  check('no research is a perfect no-op',
+    zero.damage === 1 && zero.fireRate === 1 && zero.range === 1 &&
+    zero.startCash === 0 && zero.maxBaseHp === 0 && zero.killReward === 1 &&
+    zero.interest === 0 && zero.abilityCd === 1 && zero.upgradeCost === 1);
+
+  // Fully maxed: strong, but bounded.
+  const maxed = { intel: 0, levels: {} };
+  for (const n of R.RESEARCH) maxed.levels[n.id] = n.max;
+  const m = R.researchMods(maxed);
+  check('maxed research is a real but bounded boost',
+    m.damage > 1 && m.damage < 1.5 && m.fireRate > 1 && m.fireRate < 1.4,
+    `dmg x${m.damage.toFixed(2)} rate x${m.fireRate.toFixed(2)}`);
+  check('discounts never invert into bonuses', m.abilityCd > 0 && m.upgradeCost > 0,
+    `cd x${m.abilityCd.toFixed(2)} upg x${m.upgradeCost.toFixed(2)}`);
+
+  // Buying
+  const st = { intel: 1000, levels: {} };
+  const first = R.buyNode(st, 'munitions');
+  check('a node can be bought', first.ok && st.levels.munitions === 1);
+  check('intel is deducted', st.intel === 1000 - first.cost);
+  const broke = { intel: 0, levels: {} };
+  check('cannot buy without intel', !R.buyNode(broke, 'munitions').ok);
+  const full = { intel: 99999, levels: { optics: R.researchNode('optics').max } };
+  check('cannot exceed max level', !R.buyNode(full, 'optics').ok);
+  check('unknown research is rejected', !R.buyNode(st, 'nope').ok);
+
+  // Corrupt / hostile saved state must not break anything.
+  const junk = R.researchMods({ intel: NaN, levels: { munitions: 9999, ghost: 3 } });
+  check('out-of-range saved levels do not explode', Number.isFinite(junk.damage));
+  check('mods survive a null state', Number.isFinite(R.researchMods(null).damage));
+
+  // Intel payout
+  const good = R.intelForRun({ wavesCleared: 40, kills: 1300, bossKills: 4, difficulty: 'standard' });
+  const poor = R.intelForRun({ wavesCleared: 0, kills: 0, bossKills: 0, difficulty: 'standard' });
+  const brutal = R.intelForRun({ wavesCleared: 40, kills: 1300, bossKills: 4, difficulty: 'brutal' });
+  check('a good run pays real intel', good > 50, `${good}`);
+  check('even a zero run banks something', poor >= 1, `${poor}`);
+  check('brutal pays more than standard', brutal > good, `${brutal} vs ${good}`);
+  console.log(`  info  a wave-40 standard run banks ${good} intel; first node level costs 30-55`);
+}
+
+console.log('\n--- 19. research actually reaches the simulation ---');
+{
+  const R = await import(B + 'research.js');
+  const maxed = { intel: 0, levels: {} };
+  for (const n of R.RESEARCH) maxed.levels[n.id] = n.max;
+
+  const plain = new Game(null);
+  const buffed = new Game(null);
+  buffed.research = maxed;
+  buffed.mods = R.researchMods(maxed);
+  buffed.reset = () => {};          // keep the injected mods through setup
+  buffed.cash = 999999;
+  plain.cash = 999999;
+
+  const a = plain.statsFor('mg', 1, null);
+  const b = buffed.statsFor('mg', 1, null);
+  check('research raises tower damage', b.damage > a.damage, `${a.damage} -> ${b.damage.toFixed(1)}`);
+  check('research raises fire rate', b.fireRate > a.fireRate);
+  check('research raises range', b.range > a.range);
+
+  const f1 = plain.statsFor('flame', 8, 'napalm');
+  const f2 = buffed.statsFor('flame', 8, 'napalm');
+  check('research also scales damage-over-time', f2.burn.dps > f1.burn.dps,
+    `${f1.burn.dps.toFixed(1)} -> ${f2.burn.dps.toFixed(1)}`);
+
+  const t1 = plain.place(6, 9, 'mg').tower;
+  const t2 = buffed.place(6, 9, 'mg').tower;
+  check('placed towers carry the buff', t2.stats.damage > t1.stats.damage);
+  check('upgrades are cheaper with research',
+    buffed.upgradeCostFor(t2) < plain.upgradeCostFor(t1),
+    `${plain.upgradeCostFor(t1)} -> ${buffed.upgradeCostFor(t2)}`);
+  check('ability cooldowns are shorter with research',
+    buffed.abilityCooldownTotal('airstrike') < plain.abilityCooldownTotal('airstrike'));
+
+  // And it has to actually win more fights, not just show bigger numbers.
+  const survive = (g) => {
+    g.cash = 4000;
+    for (let y = 0; y < 15; y++) g.place(7, y, 'barricade');
+    for (let y = 5; y < GRID.rows; y++) g.place(11, y, 'barricade');
+    for (const [x, y, id] of [[5,8,'mg'],[9,3,'mg'],[9,12,'cryo'],[13,6,'acid'],[5,12,'flame']]) g.place(x, y, id);
+    let cleared = 0;
+    for (let w = 1; w <= 45 && g.phase !== 'over'; w++) {
+      g.startWave();
+      let guard = 0;
+      while (g.phase === 'wave' && guard < 200 / STEP) { g.update(STEP); guard++; }
+      if (g.phase === 'building') cleared = w;
+      let spent = true;
+      while (spent) {
+        spent = false;
+        for (const t of g.towers) {
+          const c = g.upgradeCostFor(t);
+          if (c === null || g.cash < c) continue;
+          const def = TOWER_DEFS[t.defId];
+          if (g.upgrade(t, def.branches ? Object.keys(def.branches)[0] : null).ok) spent = true;
+        }
+      }
+    }
+    return cleared;
+  };
+  const plainRun = survive(new Game(null));
+  const buffedGame = new Game(null);
+  buffedGame.research = maxed;
+  buffedGame.mods = R.researchMods(maxed);
+  buffedGame.maxBaseHp = buffedGame.balance.maxBaseHp + buffedGame.mods.maxBaseHp;
+  buffedGame.baseHp = buffedGame.maxBaseHp;
+  const buffedRun = survive(buffedGame);
+  console.log(`  info  same build — no research: wave ${plainRun}, maxed research: wave ${buffedRun}`);
+  check('research measurably helps you survive longer', buffedRun > plainRun,
+    `${plainRun} -> ${buffedRun}`);
+}
+
 console.log(`\n${fails === 0 ? 'ALL CHECKS PASSED' : `${fails} CHECK(S) FAILED`}\n`);
 process.exit(fails === 0 ? 0 : 1);
 
