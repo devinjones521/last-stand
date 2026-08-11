@@ -249,6 +249,23 @@ Zombies share a single draw routine parameterised per archetype (`BODY` in
 `render.js` — torso width, head size, reach, stride speed, lean, plus flags like
 `legless`, `visor`, `maw`, `plates`). One renderer, ten distinct silhouettes.
 
+### Game feel
+
+The impact layer is deliberate rather than incidental:
+
+- **Hit flash** — bodies blow out toward white for 70ms when struck. Skipped for
+  fire and acid, which tick every frame and would otherwise leave enemies
+  permanently white.
+- **Hit stop** — heavy impacts (boss deaths, airstrikes) freeze the entire
+  simulation for ~90ms. The clock genuinely stops; the snap back is the point.
+- **Knockback** — a render-only offset, clamped to 9px total. It never moves the
+  unit in the simulation, so it cannot push anything off its route.
+- **Camera punch** — a scale kick about the board centre, separate from shake.
+- **Turret recoil**, **ejected brass**, **debris chunks with spin**, and a **pop
+  ring** on each kill so deaths read even in a packed corridor.
+- Scrap **counts up** to its value rather than snapping, so a wave payout lands
+  as an event.
+
 Static tower art (emplacements, sandbags, level pips, barricades) is baked into
 its own layer and only re-drawn when the tower set actually changes, tracked via
 `game.buildVersion`. Each frame then costs one `drawImage` plus the rotating

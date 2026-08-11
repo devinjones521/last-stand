@@ -409,6 +409,63 @@ console.log('\n--- 16. abilities never break the core promises ---');
     Number.isFinite(g2.baseHp) && g2.baseHp <= hpBefore);
 }
 
+console.log('\n--- 17. game feel stays cosmetic ---');
+{
+  const g = new Game(null);
+  g.cash = 999999;
+  for (const [x, y, id] of [[4,9,'mg'],[8,11,'mg']]) g.place(x, y, id);
+  for (const t of g.towers) for (let i = 0; i < 5; i++) g.upgrade(t, 'gatling');
+  g.wave = 25;
+  g.startWave();
+
+  let peakKnock = 0, sawFlash = false, sawCasing = false;
+  for (let i = 0; i < 25 / STEP; i++) {
+    g.update(STEP);
+    for (const e of g.enemies) {
+      peakKnock = Math.max(peakKnock, Math.hypot(e.kx, e.ky));
+      if (g.clock < e.flashUntil) sawFlash = true;
+    }
+    if (g.effects.some((f) => f.kind === 'casing')) sawCasing = true;
+  }
+  check('enemies flash when hit', sawFlash);
+  check('spent brass is ejected', sawCasing);
+  check('knockback happens', peakKnock > 0.5, `peak=${peakKnock.toFixed(2)}px`);
+  check('knockback is clamped', peakKnock <= 9.01, `peak=${peakKnock.toFixed(2)}px`);
+  check('knockback never moves the unit off its route',
+    g.enemies.every((e) => g.field[idx(e.cx, e.cy)] >= 0));
+
+  // Hit stop must freeze the world outright, then release it.
+  const g2 = new Game(null);
+  g2.startWave();
+  run(g2, 14);
+  g2.abilityReadyAt.airstrike = 0;
+  const tgt = g2.enemies[0] ? { x: g2.enemies[0].cx, y: g2.enemies[0].cy } : { x: 5, y: 10 };
+  g2.useAbility('airstrike', tgt);
+  let detonated = false;
+  for (let i = 0; i < 400 && !detonated; i++) {
+    const had = g2.strikes.length;
+    g2.update(STEP);
+    detonated = had === 1 && g2.strikes.length === 0;
+  }
+  check('airstrike triggers hit stop', detonated && g2.hitStop > 0, `stop=${g2.hitStop}`);
+  const clockBefore = g2.clock;
+  const posBefore = g2.enemies[0] ? { x: g2.enemies[0].x, y: g2.enemies[0].y } : null;
+  let frames = 0;
+  while (g2.hitStop > 0 && frames < 100) { g2.update(STEP); frames++; }
+  check('the clock does not advance while frozen', g2.clock === clockBefore);
+  if (posBefore) {
+    check('nothing moves while frozen',
+      g2.enemies[0] && g2.enemies[0].x === posBefore.x && g2.enemies[0].y === posBefore.y);
+  }
+  check('hit stop always releases', g2.hitStop === 0 && frames < 100, `frames=${frames}`);
+
+  // Hit stop must never be able to stall the game permanently.
+  const g3 = new Game(null);
+  g3.hitStop = 999;
+  for (let i = 0; i < 5 / STEP; i++) g3.update(STEP);
+  check('a huge hit stop still drains', g3.hitStop < 999);
+}
+
 console.log(`\n${fails === 0 ? 'ALL CHECKS PASSED' : `${fails} CHECK(S) FAILED`}\n`);
 process.exit(fails === 0 ? 0 : 1);
 

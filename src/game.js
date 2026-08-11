@@ -84,6 +84,9 @@ export class Game {
     this.autoStart = false;
     this.phase = 'building';  // 'building' | 'wave' | 'over'
     this.shake = 0;
+    // Game feel: a brief total freeze on heavy impacts, and a camera punch.
+    this.hitStop = 0;
+    this.punch = 0;
     this.stats = { kills: 0, leaked: 0, earned: 0, spent: 0, bestWave: 0 };
 
     this.rebuild();
@@ -211,6 +214,7 @@ export class Game {
       ref: null,
       damageDealt: 0,
       kills: 0,
+      recoil: 0,
       stats: towerStats(defId, 1, null),
     };
     this.towers.push(tower);
@@ -351,6 +355,8 @@ export class Game {
       resist: 0, resistUntil: 0,
       auraSpeed: 1, auraResist: 0,
       wobble: Math.random() * Math.PI * 2,
+      flashUntil: -1,
+      kx: 0, ky: 0,          // cosmetic knockback offset
       dead: false,
     };
     this.retarget(e);
@@ -453,7 +459,9 @@ export class Game {
         life: 0.5, max: 0.5, color: '#ffb020',
       });
       this.pushDecal('scorch', s.x, s.y, s.radius * 0.8, '#000000');
-      this.shake = Math.max(this.shake, 16);
+      this.shake = Math.max(this.shake, 18);
+      this.punch = Math.max(this.punch, 0.026);
+      this.hitStop = Math.max(this.hitStop, 0.09);
       this.audio?.play('boom');
       this.strikes.splice(i, 1);
     }
@@ -498,6 +506,29 @@ export class Game {
       if (e.hp - dmg <= 0) opts.src.kills += 1;
     }
 
+    // Impact feedback. Deliberately skipped for fire and acid: those tick every
+    // frame, so flashing on them would leave enemies permanently white.
+    if (type !== 'fire' && type !== 'acid') {
+      e.flashUntil = this.clock + 0.07;
+      // Knockback scales with how big the hit was relative to the target, and
+      // is purely cosmetic - it never moves the unit in the simulation.
+      const bite = dmg / Math.max(1, e.maxHp);
+      if (bite > 0.004) {
+        const sp = Math.hypot(e.vx, e.vy) || 1;
+        // Tuned so an ordinary rifle round nudges a couple of pixels and a
+        // mortar shell visibly shoves; at this zoom a few pixels is a lot.
+        const push = Math.min(8, 1.2 + bite * 90);
+        e.kx -= (e.vx / sp) * push;
+        e.ky -= (e.vy / sp) * push;
+
+        // Clamp the ACCUMULATED offset, not just each hit: rapid fire stacks
+        // pushes far faster than they decay, which would tear the sprite away
+        // from where the unit actually is.
+        const mag = Math.hypot(e.kx, e.ky);
+        if (mag > 9) { e.kx = (e.kx / mag) * 9; e.ky = (e.ky / mag) * 9; }
+      }
+    }
+
     e.hp -= dmg;
     if (e.hp <= 0) this.kill(e);
     return dmg;
@@ -529,11 +560,37 @@ export class Game {
       });
     }
 
+    // A pop ring reads the kill instantly even in a crowded corridor.
+    this.effects.push({
+      kind: 'pop', x: e.x, y: e.y, r: e.radius * 2.2,
+      life: 0.22, max: 0.22, color: e.def.color,
+    });
+    this.spawnChunks(e);
+
     if (e.def.traits?.boss) {
-      this.shake = Math.max(this.shake, 14);
+      this.shake = Math.max(this.shake, 16);
+      this.punch = Math.max(this.punch, 0.02);
+      this.hitStop = Math.max(this.hitStop, 0.11);
       this.audio?.play('bossdie');
     } else {
       this.audio?.play('die');
+    }
+  }
+
+  /** Chunkier debris than the blood spray, with spin, that settles and fades. */
+  spawnChunks(e) {
+    const n = e.def.traits?.boss ? 9 : 3;
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 50 + Math.random() * 150;
+      this.effects.push({
+        kind: 'chunk', x: e.x, y: e.y,
+        vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+        rot: Math.random() * Math.PI, spin: (Math.random() - 0.5) * 14,
+        size: e.radius * (0.16 + Math.random() * 0.2),
+        life: 0.5 + Math.random() * 0.4, max: 0.9,
+        color: e.def.shade,
+      });
     }
   }
 
@@ -610,6 +667,14 @@ export class Game {
       this.updateVisuals(dt);
       return;
     }
+
+    // Hit stop: freeze the world outright for a few frames so heavy impacts
+    // land. Everything stops, which is what makes the resume feel like a snap.
+    if (this.hitStop > 0) {
+      this.hitStop = Math.max(0, this.hitStop - dt);
+      return;
+    }
+
     this.clock += dt;
 
     // A Rally Flare expiring sends everyone back to walking at the camp.
@@ -692,6 +757,15 @@ export class Game {
       }
 
       e.wobble += dt * (4 + e.speed);
+
+      // Knockback springs back to zero rather than displacing the unit.
+      if (e.kx || e.ky) {
+        const decay = Math.max(0, 1 - dt * 9);
+        e.kx *= decay;
+        e.ky *= decay;
+        if (Math.abs(e.kx) < 0.04) e.kx = 0;
+        if (Math.abs(e.ky) < 0.04) e.ky = 0;
+      }
 
       if (this.clock < e.stunUntil) { e.vx = 0; e.vy = 0; continue; }
 
@@ -897,6 +971,20 @@ export class Game {
       src: t,
     });
     this.effects.push({ kind: 'muzzle', x: t.px, y: t.py, a: ang, life: 0.06, max: 0.06, color: s.color });
+    t.recoil = 1;
+
+    // Spent brass, thrown sideways out of the breech. Throttled because a
+    // maxed Gatling fires ~12 rounds a second.
+    if (!isAcid && Math.random() < 0.3) {
+      const side = ang + Math.PI / 2 * (Math.random() < 0.5 ? 1 : -1);
+      const sp = 40 + Math.random() * 60;
+      this.effects.push({
+        kind: 'casing', x: t.px, y: t.py,
+        vx: Math.cos(side) * sp, vy: Math.sin(side) * sp,
+        rot: Math.random() * Math.PI, spin: (Math.random() - 0.5) * 22,
+        life: 0.45 + Math.random() * 0.25, max: 0.7,
+      });
+    }
     this.audio?.play(isAcid ? 'acid' : 'shot');
   }
 
@@ -920,6 +1008,8 @@ export class Game {
       kind: 'beam', x1: t.px, y1: t.py, x2: target.x, y2: target.y,
       life: 0.12, max: 0.12, color: s.color, width: crit ? 3 : 1.8,
     });
+    t.recoil = 1;
+    if (crit) this.punch = Math.max(this.punch, 0.007);
     this.audio?.play('snipe');
   }
 
@@ -1102,6 +1192,7 @@ export class Game {
     });
     this.pushDecal('scorch', p.x, p.y, p.splash * 0.75, '#000000');
     this.shake = Math.max(this.shake, 5);
+    this.punch = Math.max(this.punch, 0.008);
     this.audio?.play('boom');
   }
 
@@ -1138,6 +1229,13 @@ export class Game {
       if (fx.kind === 'blood') {
         fx.x += fx.vx * dt; fx.y += fx.vy * dt;
         fx.vx *= 0.88; fx.vy *= 0.88;
+      } else if (fx.kind === 'chunk' || fx.kind === 'casing') {
+        // Skid to a halt and stop spinning, as if landing on dirt.
+        fx.x += fx.vx * dt; fx.y += fx.vy * dt;
+        const drag = Math.max(0, 1 - dt * 6);
+        fx.vx *= drag; fx.vy *= drag;
+        fx.rot += fx.spin * dt;
+        fx.spin *= drag;
       }
       if (fx.life <= 0) this.effects.splice(i, 1);
     }
@@ -1148,6 +1246,12 @@ export class Game {
       if (f.life <= 0) this.floaters.splice(i, 1);
     }
     this.shake = Math.max(0, this.shake - dt * 40);
+    this.punch = Math.max(0, this.punch - dt * 0.11);
+
+    // Turret recoil springs back fast.
+    for (const t of this.towers) {
+      if (t.recoil > 0) t.recoil = Math.max(0, t.recoil - dt * 9);
+    }
   }
 
   cullDead() {
@@ -1224,7 +1328,7 @@ export class Game {
         level: t.l, branch: t.b, invested: t.i,
         target: t.m ?? 'first',
         cooldown: 0, angle: 0, spin: 0, ref: null,
-        damageDealt: t.dd ?? 0, kills: t.k ?? 0,
+        damageDealt: t.dd ?? 0, kills: t.k ?? 0, recoil: 0,
         stats: towerStats(t.d, t.l, t.b),
       };
       this.towers.push(tower);

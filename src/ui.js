@@ -214,10 +214,19 @@ export class UI {
 
     this.refreshAbilities();
 
+    // Scrap counts up to its real value rather than snapping, so a wave payout
+    // reads as an event. Snaps instantly when it drops (a purchase).
     const cash = Math.floor(g.cash);
-    if (force || c.cash !== cash) {
-      c.cash = cash;
-      $('#v-cash').textContent = `$${cash.toLocaleString()}`;
+    if (this.shownCash === undefined || force) this.shownCash = cash;
+    if (this.shownCash !== cash) {
+      const gap = cash - this.shownCash;
+      this.shownCash = gap < 0 || Math.abs(gap) < 2
+        ? cash
+        : this.shownCash + Math.max(1, Math.ceil(gap * 0.18));
+    }
+    if (force || c.cash !== this.shownCash) {
+      c.cash = this.shownCash;
+      $('#v-cash').textContent = `$${this.shownCash.toLocaleString()}`;
       this.refreshAffordability();
     }
     if (force || c.wave !== g.wave) {

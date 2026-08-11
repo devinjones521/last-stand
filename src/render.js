@@ -212,6 +212,14 @@ export class Renderer {
     this.time += dt;
 
     ctx.save();
+    // Camera: a scale punch on heavy impacts, plus positional shake. Scaling
+    // about the centre keeps the board framed while it kicks.
+    if (game.punch > 0.0005) {
+      const k = 1 + game.punch;
+      ctx.translate(CANVAS_W / 2, CANVAS_H / 2);
+      ctx.scale(k, k);
+      ctx.translate(-CANVAS_W / 2, -CANVAS_H / 2);
+    }
     if (game.shake > 0.2) {
       ctx.translate(
         (Math.random() - 0.5) * game.shake,
@@ -593,6 +601,8 @@ export class Renderer {
       ctx.save();
       ctx.translate((t.x + 0.5) * CELL, (t.y + 0.5) * CELL);
       ctx.rotate(t.angle);
+      // Kick the barrel back along its own axis as it fires.
+      if (t.recoil > 0) ctx.translate(-t.recoil * 2.6, 0);
       this.drawTurret(def.shape, t, t.stats);
       ctx.restore();
     }
@@ -787,20 +797,27 @@ export class Renderer {
     const bob = stunned ? 0 : Math.abs(Math.sin(phase)) * r * 0.08;
     const face = e.dx !== 0 ? Math.sign(e.dx) : 1;
 
-    const skin = e.def.color;
-    const dark = e.def.shade;
-    const lit = lighten(skin, 26);
+    // Hit flash blows the whole body out toward white for a few frames.
+    const flash = Math.max(0, (e.flashUntil - this.game.clock) / 0.07);
+    const boost = flash * 190;
+    const skin = flash > 0 ? lighten(e.def.color, boost) : e.def.color;
+    const dark = flash > 0 ? lighten(e.def.shade, boost) : e.def.shade;
+    const lit = lighten(e.def.color, 26 + boost);
+
+    // Knockback is a render-only offset; the simulation never sees it.
+    const px = e.x + e.kx;
+    const py = e.y + e.ky;
 
     const drop = b.legless ? r * 0.3 : 0;
 
     // Shadow stays in world space — it must not flip or lean with the body.
     ctx.fillStyle = 'rgba(0,0,0,0.45)';
     ctx.beginPath();
-    ctx.ellipse(e.x, e.y + r * 0.95, r * 0.72, r * 0.26, 0, 0, TAU);
+    ctx.ellipse(px, e.y + r * 0.95, r * 0.72, r * 0.26, 0, 0, TAU);
     ctx.fill();
 
     ctx.save();
-    ctx.translate(e.x, e.y - bob + drop);
+    ctx.translate(px, py - bob + drop);
     ctx.scale(face, 1);
     ctx.rotate(b.hunch * 0.3);
 
@@ -942,12 +959,12 @@ export class Renderer {
       ctx.strokeStyle = `rgba(255,90,60,${0.5 + 0.3 * Math.sin(this.time * 4)})`;
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.arc(e.x, e.y, r + 4, 0, TAU);
+      ctx.arc(px, py, r + 4, 0, TAU);
       ctx.stroke();
     }
 
-    this.drawEnemyStatus(e, e.x, e.y, r);
-    this.drawEnemyHp(e, e.x, e.y, r, boss);
+    this.drawEnemyStatus(e, px, py, r);
+    this.drawEnemyHp(e, px, py, r, boss);
   }
 
   drawEnemyStatus(e, x, y, r) {
@@ -1065,6 +1082,32 @@ export class Renderer {
         ctx.fillStyle = fx.color;
         ctx.globalAlpha = Math.min(1, k * 1.4);
         ctx.fillRect(fx.x, fx.y, fx.size, fx.size);
+        ctx.globalAlpha = 1;
+      } else if (fx.kind === 'chunk') {
+        ctx.save();
+        ctx.translate(fx.x, fx.y);
+        ctx.rotate(fx.rot);
+        ctx.globalAlpha = Math.min(1, k * 1.6);
+        ctx.fillStyle = fx.color;
+        ctx.fillRect(-fx.size, -fx.size * 0.6, fx.size * 2, fx.size * 1.2);
+        ctx.globalAlpha = 1;
+        ctx.restore();
+      } else if (fx.kind === 'casing') {
+        ctx.save();
+        ctx.translate(fx.x, fx.y);
+        ctx.rotate(fx.rot);
+        ctx.globalAlpha = Math.min(1, k * 1.8);
+        ctx.fillStyle = '#c9a227';
+        ctx.fillRect(-2.2, -0.9, 4.4, 1.8);
+        ctx.globalAlpha = 1;
+        ctx.restore();
+      } else if (fx.kind === 'pop') {
+        ctx.strokeStyle = fx.color;
+        ctx.globalAlpha = k * 0.75;
+        ctx.lineWidth = 2.5 * k + 0.5;
+        ctx.beginPath();
+        ctx.arc(fx.x, fx.y, fx.r * (1.25 - k * 0.85), 0, TAU);
+        ctx.stroke();
         ctx.globalAlpha = 1;
       } else if (fx.kind === 'cone') {
         const grad = ctx.createRadialGradient(fx.x, fx.y, 4, fx.x, fx.y, fx.r);
