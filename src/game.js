@@ -44,6 +44,12 @@ export class Game {
 
   reset(difficulty = this.balance?.difficulty ?? 'standard') {
     this.balance = balanceFor(difficulty);
+    // Bumped on every reset so the renderer knows to wipe its decal layer.
+    this.epoch = (this.epoch ?? 0) + 1;
+    // Append-only queue of permanent ground marks (blood, scorch). The renderer
+    // drains it into an offscreen layer; capped so a headless run can't grow it
+    // without bound.
+    this.decals = [];
     this.towers = [];
     this.towerAt.fill(null);
     this.enemies = [];
@@ -370,6 +376,7 @@ export class Game {
     this.stats.kills += 1;
 
     this.spawnBlood(e.x, e.y, e.def.traits?.boss ? 26 : 8, e.def.shade);
+    this.pushDecal('blood', e.x, e.y, e.radius * (e.def.traits?.boss ? 2.1 : 1.15), e.def.shade);
 
     // Bloaters armour up everything around them when they pop.
     const gas = e.def.traits?.deathGas;
@@ -950,11 +957,18 @@ export class Game {
       kind: 'explosion', x: p.x, y: p.y, r: p.splash,
       life: 0.35, max: 0.35, color: p.color,
     });
+    this.pushDecal('scorch', p.x, p.y, p.splash * 0.75, '#000000');
     this.shake = Math.max(this.shake, 5);
     this.audio?.play('boom');
   }
 
   // -- bookkeeping ---------------------------------------------------------
+
+  /** Queue a permanent ground mark. Oldest are dropped once the cap is hit. */
+  pushDecal(kind, x, y, r, color) {
+    if (this.decals.length > 400) this.decals.shift();
+    this.decals.push({ kind, x, y, r, color });
+  }
 
   spawnBlood(x, y, count, color) {
     for (let i = 0; i < count; i++) {

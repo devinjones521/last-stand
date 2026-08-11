@@ -180,6 +180,31 @@ Mono (every numeral, tabular) — all self-hosted under the OFL.
 It commits to a single dark theme on purpose; there is no light mode, and every
 colour is painted explicitly so nothing borrows a host background.
 
+### How the battlefield is drawn
+
+Four layers composite each frame, all plain Canvas 2D:
+
+1. **Terrain** — baked once at device resolution into an offscreen canvas.
+2. **Decals** — a second offscreen canvas that is only ever *added* to. Blood
+   pools, mortar scorch and the track the horde wears into the dirt accumulate
+   there permanently, so a wave-40 battlefield looks nothing like a fresh one.
+   The sim pushes marks onto `game.decals`; the renderer drains that queue.
+3. **The world** — route, towers, then zombies depth-sorted by `y`.
+4. **Lighting** — darkness is filled over everything, then punched back out
+   with `destination-out` around each light (camp floodlights, the breach,
+   engaged towers, fires, muzzle flashes), followed by an additive warm bloom.
+   Lights use one cached radial sprite rather than per-frame gradients.
+
+Night is kept at only 38% opacity on purpose: a tower defense has to stay
+readable across the whole board, so legibility beats mood.
+
+Zombies share a single draw routine parameterised per archetype (`BODY` in
+`render.js` — torso width, head size, reach, stride speed, lean, plus flags like
+`legless`, `visor`, `maw`, `plates`). One renderer, ten distinct silhouettes.
+
+Whole-frame cost with 60+ towers and a live wave is about **1.7ms**, against a
+16.7ms budget — roughly 10% of one frame at 60fps.
+
 ### Why a flow field instead of A*
 
 Rather than pathing each zombie individually, a single BFS runs outward from the

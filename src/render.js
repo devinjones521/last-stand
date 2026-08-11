@@ -8,10 +8,52 @@ import { TOWER_DEFS } from './towers.js';
 const CELL = GRID.cell;
 const TAU = Math.PI * 2;
 
+/**
+ * Per-archetype build. These drive one shared zombie renderer, so every type
+ * gets a distinct silhouette without a bespoke draw routine each.
+ *   w = torso width · head = head radius · arm = reach · gait = stride speed
+ *   hunch = forward lean (negative leans back)
+ */
+const BODY = {
+  walker:      { w: 0.80, head: 0.40, arm: 0.95, gait: 1.0, hunch: 0.10 },
+  runner:      { w: 0.66, head: 0.36, arm: 0.80, gait: 2.0, hunch: 0.34 },
+  crawler:     { w: 0.95, head: 0.34, arm: 1.15, gait: 2.6, hunch: 0.62, legless: true },
+  brute:       { w: 1.12, head: 0.38, arm: 1.15, gait: 0.70, hunch: 0.18, pads: true },
+  hazmat:      { w: 0.84, head: 0.46, arm: 0.82, gait: 1.0, hunch: 0.06, visor: true },
+  screamer:    { w: 0.68, head: 0.44, arm: 0.78, gait: 1.1, hunch: -0.14, maw: true },
+  regenerator: { w: 0.88, head: 0.40, arm: 0.92, gait: 0.90, hunch: 0.12, sinew: true },
+  bloater:     { w: 1.18, head: 0.32, arm: 0.72, gait: 0.60, hunch: 0.04, belly: true },
+  husk:        { w: 0.74, head: 0.36, arm: 1.05, gait: 1.0, hunch: 0.22, angular: true },
+  juggernaut:  { w: 1.28, head: 0.34, arm: 1.25, gait: 0.48, hunch: 0.12, pads: true, plates: true },
+};
+
+/** Nudge a #rrggbb hex toward white. */
+function lighten(hex, amount) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = Math.min(255, ((n >> 16) & 255) + amount);
+  const g = Math.min(255, ((n >> 8) & 255) + amount);
+  const b = Math.min(255, (n & 255) + amount);
+  return `rgb(${r},${g},${b})`;
+}
+
 /** Deterministic hash-noise so the ground texture is stable between reloads. */
 function noise(x, y) {
   const n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
   return n - Math.floor(n);
+}
+
+/**
+ * How dark the unlit battlefield gets. Kept deliberately modest: this is a
+ * night siege for atmosphere, but a tower defense has to stay readable at a
+ * glance across the whole board, so legibility wins over mood.
+ */
+const NIGHT = 'rgba(6,8,5,0.38)';
+
+function layer(w, h) {
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  return c;
 }
 
 export class Renderer {
@@ -21,6 +63,43 @@ export class Renderer {
     this.ctx = canvas.getContext('2d');
     this.terrain = this.bakeTerrain();
     this.time = 0;
+
+    // Permanent ground marks — blood, scorch, the worn track the horde beats
+    // into the dirt. Drawn once each, never re-drawn per frame.
+    this.decals = layer(CANVAS_W, CANVAS_H);
+    this.decalCtx = this.decals.getContext('2d');
+    this.epoch = game.epoch;
+
+    // Darkness with holes punched in it wherever something emits light.
+    this.lights = layer(CANVAS_W, CANVAS_H);
+    this.lightCtx = this.lights.getContext('2d');
+    this.spriteCache = new Map();
+    this.sorted = [];
+    this.wearTick = 0;
+  }
+
+  /** A cached soft radial blob, tinted. Far cheaper than per-frame gradients. */
+  sprite(color) {
+    let s = this.spriteCache.get(color);
+    if (s) return s;
+    const size = 128;
+    s = layer(size, size);
+    const g = s.getContext('2d');
+    const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    if (color === '#fff') {
+      grad.addColorStop(0, 'rgba(255,255,255,1)');
+      grad.addColorStop(0.42, 'rgba(255,255,255,0.62)');
+      grad.addColorStop(1, 'rgba(255,255,255,0)');
+    } else {
+      const [r, gg, b] = [1, 3, 5].map((i) => parseInt(color.slice(i, i + 2), 16));
+      grad.addColorStop(0, `rgba(${r},${gg},${b},0.95)`);
+      grad.addColorStop(0.4, `rgba(${r},${gg},${b},0.4)`);
+      grad.addColorStop(1, `rgba(${r},${gg},${b},0)`);
+    }
+    g.fillStyle = grad;
+    g.fillRect(0, 0, size, size);
+    this.spriteCache.set(color, s);
+    return s;
   }
 
   /** The static ground + rubble is drawn once into an offscreen canvas. */
@@ -136,8 +215,11 @@ export class Renderer {
 
     ctx.drawImage(this.terrain, 0, 0, CANVAS_W, CANVAS_H);
 
+    this.consumeDecals(dt);
+    ctx.drawImage(this.decals, 0, 0, CANVAS_W, CANVAS_H);
+
     this.drawRoute(game.route, COLORS.route, COLORS.routeLine, false);
-    if (view.previewRoute) this.drawRoute(view.previewRoute, 'rgba(120,220,120,0.10)', 'rgba(140,240,140,0.6)', true);
+    if (view.previewRoute) this.drawRoute(view.previewRoute, 'rgba(232,145,42,0.10)', 'rgba(255,190,90,0.65)', true);
 
     this.drawPuddles();
     this.drawSpawn();
@@ -148,10 +230,171 @@ export class Renderer {
     this.drawEnemies();
     this.drawProjectiles();
     this.drawAirEffects();
-    this.drawFloaters();
 
+    // Night falls after the world is drawn, so everything sits in real dark and
+    // only muzzle flashes, fires and the camp lamps carve it back open.
+    this.drawLighting();
+    this.drawGlow();
+
+    // UI-ish layers stay above the darkness so they never lose legibility.
+    this.drawFloaters();
     this.drawOverlay(view);
     ctx.restore();
+  }
+
+  /** Drain the sim's decal queue onto the permanent layer. */
+  consumeDecals(dt) {
+    const { game } = this;
+
+    // A new run wipes the battlefield clean.
+    if (game.epoch !== this.epoch) {
+      this.epoch = game.epoch;
+      this.decalCtx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+    }
+
+    const g = this.decalCtx;
+    for (const d of game.decals) {
+      if (d.kind === 'blood') {
+        // A few overlapping blobs read as a splatter, not a circle.
+        for (let i = 0; i < 5; i++) {
+          const a = Math.random() * TAU;
+          const dist = Math.random() * d.r;
+          g.fillStyle = `rgba(74,10,16,${0.1 + Math.random() * 0.16})`;
+          g.beginPath();
+          g.arc(d.x + Math.cos(a) * dist, d.y + Math.sin(a) * dist,
+            d.r * (0.22 + Math.random() * 0.4), 0, TAU);
+          g.fill();
+        }
+      } else if (d.kind === 'scorch') {
+        const grad = g.createRadialGradient(d.x, d.y, 1, d.x, d.y, d.r);
+        grad.addColorStop(0, 'rgba(0,0,0,0.42)');
+        grad.addColorStop(0.6, 'rgba(0,0,0,0.2)');
+        grad.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = grad;
+        g.beginPath();
+        g.arc(d.x, d.y, d.r, 0, TAU);
+        g.fill();
+      }
+    }
+    game.decals.length = 0;
+
+    // The horde wears a track into the dirt wherever it actually walks. Purely
+    // a render-side effect derived from live positions - the sim knows nothing.
+    this.wearTick -= dt;
+    if (this.wearTick <= 0 && game.enemies.length) {
+      this.wearTick = 0.1;
+      g.fillStyle = 'rgba(28,22,14,0.05)';
+      for (const e of game.enemies) {
+        if (e.dead) continue;
+        g.beginPath();
+        g.ellipse(e.x, e.y + e.radius * 0.6, e.radius * 0.5, e.radius * 0.22, 0, 0, TAU);
+        g.fill();
+      }
+    }
+  }
+
+  /** Collect every light on the field this frame. */
+  collectLights() {
+    const { game } = this;
+    const out = [];
+
+    // The camp burns floodlights; the breach glows with whatever is coming.
+    out.push({ x: (GOAL.x + 0.5) * CELL, y: (GOAL.y + 0.5) * CELL, r: 175, a: 1 });
+    out.push({
+      x: (SPAWN.x + 0.5) * CELL, y: (SPAWN.y + 0.5) * CELL,
+      r: 120 + Math.sin(this.time * 2.2) * 8, a: 0.9,
+    });
+
+    for (const t of game.towers) {
+      const s = t.stats;
+      // Even a plain barricade catches enough light to read as an obstacle.
+      if (s.inert) { out.push({ x: (t.x + 0.5) * CELL, y: (t.y + 0.5) * CELL, r: 46, a: 0.5 }); continue; }
+      // Engaged towers light up their own firing position.
+      const hot = t.ref ? 1 : 0.7;
+      out.push({
+        x: (t.x + 0.5) * CELL, y: (t.y + 0.5) * CELL,
+        r: (66 + t.level * 4) * hot, a: 0.6 + 0.3 * hot,
+      });
+    }
+
+    // Zombies catch a little ambient light, so a pack is never a black void.
+    for (const e of game.enemies) {
+      if (!e.dead) out.push({ x: e.x, y: e.y, r: e.radius * 3.4, a: 0.45 });
+    }
+
+    for (const p of game.puddles) {
+      out.push({ x: p.x, y: p.y, r: p.radius * 1.7, a: Math.min(1, p.life / 1.5) * 0.95 });
+    }
+
+    for (const fx of game.effects) {
+      const k = fx.life / fx.max;
+      if (fx.kind === 'explosion') out.push({ x: fx.x, y: fx.y, r: fx.r * 2.4 * k, a: 1 });
+      else if (fx.kind === 'muzzle') out.push({ x: fx.x, y: fx.y, r: 52 * k, a: 1 });
+      else if (fx.kind === 'cone') out.push({ x: fx.x, y: fx.y, r: fx.r * 1.5, a: 0.9 * k });
+      else if (fx.kind === 'arc') out.push({ x: fx.x2, y: fx.y2, r: 46 * k, a: 0.9 });
+      else if (fx.kind === 'beam') out.push({ x: fx.x2, y: fx.y2, r: 34 * k, a: 0.8 });
+    }
+    return out;
+  }
+
+  drawLighting() {
+    const L = this.lightCtx;
+    L.globalCompositeOperation = 'source-over';
+    L.globalAlpha = 1;
+    L.clearRect(0, 0, CANVAS_W, CANVAS_H);
+    L.fillStyle = NIGHT;
+    L.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+    // Punch the darkness away around every light source.
+    const white = this.sprite('#fff');
+    L.globalCompositeOperation = 'destination-out';
+    for (const l of this.collectLights()) {
+      if (l.r <= 0) continue;
+      L.globalAlpha = Math.min(1, l.a);
+      L.drawImage(white, l.x - l.r, l.y - l.r, l.r * 2, l.r * 2);
+    }
+    L.globalAlpha = 1;
+    L.globalCompositeOperation = 'source-over';
+
+    this.ctx.drawImage(this.lights, 0, 0, CANVAS_W, CANVAS_H);
+  }
+
+  /** Warm additive bloom over the top, for things that are genuinely burning. */
+  drawGlow() {
+    const { ctx, game } = this;
+    ctx.globalCompositeOperation = 'lighter';
+
+    const fire = this.sprite('#ff7a1e');
+    for (const p of game.puddles) {
+      if (p.acid) continue;
+      const a = Math.min(1, p.life / 1.5) * (0.22 + 0.1 * Math.sin(this.time * 12 + p.x));
+      const r = p.radius * 1.5;
+      ctx.globalAlpha = a;
+      ctx.drawImage(fire, p.x - r, p.y - r, r * 2, r * 2);
+    }
+
+    for (const fx of game.effects) {
+      const k = fx.life / fx.max;
+      if (fx.kind === 'explosion') {
+        const r = fx.r * 1.9;
+        ctx.globalAlpha = k * 0.65;
+        ctx.drawImage(fire, fx.x - r, fx.y - r, r * 2, r * 2);
+      } else if (fx.kind === 'muzzle') {
+        const r = 30 * k;
+        ctx.globalAlpha = k * 0.5;
+        ctx.drawImage(fire, fx.x - r, fx.y - r, r * 2, r * 2);
+      }
+    }
+
+    // The camp's own lamps, always burning.
+    const warm = this.sprite('#c7ab6d');
+    const bx = (GOAL.x + 0.5) * CELL;
+    const by = (GOAL.y + 0.5) * CELL;
+    ctx.globalAlpha = 0.16;
+    ctx.drawImage(warm, bx - 90, by - 90, 180, 180);
+
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
   }
 
   drawRoute(route, fill, stroke, dashed) {
@@ -485,60 +728,198 @@ export class Renderer {
   // -- enemies --------------------------------------------------------------
 
   drawEnemies() {
-    const { ctx, game } = this;
-    for (const e of game.enemies) {
-      if (e.dead) continue;
-      const boss = !!e.def.traits?.boss;
-      const wob = Math.sin(e.wobble) * (boss ? 1.5 : 2.2);
-      const x = e.x;
-      const y = e.y + wob * 0.4;
-      const r = e.radius;
+    // Depth sort so overlapping bodies stack believably instead of by array order.
+    const arr = this.sorted;
+    arr.length = 0;
+    for (const e of this.game.enemies) if (!e.dead) arr.push(e);
+    arr.sort((a, b) => a.y - b.y);
+    for (const e of arr) this.drawEnemy(e);
+  }
 
-      ctx.fillStyle = 'rgba(0,0,0,0.35)';
-      ctx.beginPath();
-      ctx.ellipse(x, y + r * 0.75, r * 0.85, r * 0.35, 0, 0, TAU);
-      ctx.fill();
+  drawEnemy(e) {
+    const { ctx } = this;
+    const b = BODY[e.typeId] ?? BODY.walker;
+    const r = e.radius;
+    const boss = !!e.def.traits?.boss;
+    const stunned = this.game.clock < e.stunUntil;
 
-      // Body.
-      ctx.fillStyle = e.def.shade;
-      ctx.beginPath();
-      ctx.ellipse(x, y, r * 0.82, r, wob * 0.05, 0, TAU);
-      ctx.fill();
-      ctx.fillStyle = e.def.color;
-      ctx.beginPath();
-      ctx.ellipse(x - r * 0.12, y - r * 0.15, r * 0.62, r * 0.75, wob * 0.05, 0, TAU);
-      ctx.fill();
+    const phase = e.wobble * b.gait;
+    const swing = stunned ? 0 : Math.sin(phase);
+    const bob = stunned ? 0 : Math.abs(Math.sin(phase)) * r * 0.08;
+    const face = e.dx !== 0 ? Math.sign(e.dx) : 1;
 
-      // Head, lolling side to side.
-      ctx.fillStyle = e.def.color;
-      ctx.beginPath();
-      ctx.arc(x + wob * 0.5, y - r * 0.75, r * 0.42, 0, TAU);
-      ctx.fill();
-      ctx.fillStyle = 'rgba(0,0,0,0.55)';
-      ctx.beginPath();
-      ctx.arc(x + wob * 0.5 + r * 0.14, y - r * 0.78, r * 0.11, 0, TAU);
-      ctx.fill();
+    const skin = e.def.color;
+    const dark = e.def.shade;
+    const lit = lighten(skin, 26);
 
-      if (boss) {
-        ctx.strokeStyle = 'rgba(255,90,60,0.8)';
-        ctx.lineWidth = 2;
+    const drop = b.legless ? r * 0.3 : 0;
+
+    // Shadow stays in world space — it must not flip or lean with the body.
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.beginPath();
+    ctx.ellipse(e.x, e.y + r * 0.95, r * 0.72, r * 0.26, 0, 0, TAU);
+    ctx.fill();
+
+    ctx.save();
+    ctx.translate(e.x, e.y - bob + drop);
+    ctx.scale(face, 1);
+    ctx.rotate(b.hunch * 0.3);
+
+    ctx.lineCap = 'round';
+
+    const tw = r * b.w * 0.55;
+    const shoulder = -r * 0.34;
+
+    // Legs stride out well below the torso so the walk cycle actually reads.
+    if (!b.legless) {
+      ctx.strokeStyle = dark;
+      ctx.lineWidth = r * 0.26;
+      for (const s of [1, -1]) {
         ctx.beginPath();
-        ctx.arc(x, y, r + 3 + Math.sin(this.time * 4) * 1.5, 0, TAU);
+        ctx.moveTo(-r * 0.02 + s * tw * 0.3, r * 0.3);
+        ctx.lineTo(swing * s * r * 0.42, r * 0.95);
         ctx.stroke();
       }
-
-      this.drawEnemyStatus(e, x, y, r);
-      this.drawEnemyHp(e, x, y, r, boss);
     }
+
+    // Two arms at clearly different heights: the rear one hangs low, the front
+    // one reaches. Drawn either side of the torso so both stay legible.
+    // Rear arm hangs low and still clears the torso on the widest bodies,
+    // otherwise it hides behind them and both arms read as one bar.
+    const rearX = (tw + r * b.arm * 0.55);
+    const rearY = r * 0.42 + swing * r * 0.16;
+    ctx.strokeStyle = dark;
+    ctx.lineWidth = r * 0.2;
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.05, shoulder + r * 0.06);
+    ctx.lineTo(rearX, rearY);
+    ctx.stroke();
+    ctx.fillStyle = dark;
+    ctx.beginPath(); ctx.arc(rearX, rearY, r * 0.13, 0, TAU); ctx.fill();
+
+    if (b.angular) {
+      ctx.fillStyle = skin;
+      ctx.beginPath();
+      ctx.moveTo(-tw, r * 0.48);
+      ctx.lineTo(-tw * 0.8, -r * 0.42);
+      ctx.lineTo(tw * 0.5, -r * 0.56);
+      ctx.lineTo(tw, r * 0.14);
+      ctx.lineTo(tw * 0.34, r * 0.55);
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      ctx.fillStyle = skin;
+      ctx.beginPath();
+      ctx.ellipse(0, -r * 0.05, tw, r * 0.56, 0, 0, TAU);
+      ctx.fill();
+    }
+    if (b.belly) {
+      ctx.fillStyle = lighten(skin, 16);
+      ctx.beginPath();
+      ctx.ellipse(r * 0.08, r * 0.14, tw * 0.84, r * 0.42, 0, 0, TAU);
+      ctx.fill();
+    }
+    // Rim light from above-left gives the torso volume.
+    ctx.strokeStyle = 'rgba(255,246,224,0.3)';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.ellipse(0, -r * 0.05, tw, r * 0.56, 0, Math.PI * 1.05, Math.PI * 1.9);
+    ctx.stroke();
+
+    if (b.plates) {
+      // Segmented armour bands with a lit top edge — reads as plate, not a bar.
+      ctx.fillStyle = 'rgba(44,44,40,0.92)';
+      ctx.fillRect(-tw * 0.8, -r * 0.34, tw * 1.6, r * 0.2);
+      ctx.fillRect(-tw * 0.66, -r * 0.04, tw * 1.32, r * 0.18);
+      ctx.fillStyle = 'rgba(190,185,170,0.28)';
+      ctx.fillRect(-tw * 0.8, -r * 0.34, tw * 1.6, 1.4);
+      ctx.fillRect(-tw * 0.66, -r * 0.04, tw * 1.32, 1.4);
+    }
+    if (b.pads) {
+      ctx.fillStyle = dark;
+      ctx.beginPath(); ctx.arc(-tw * 0.72, shoulder, r * 0.27, 0, TAU); ctx.fill();
+      ctx.beginPath(); ctx.arc(tw * 0.72, shoulder, r * 0.27, 0, TAU); ctx.fill();
+    }
+    if (b.sinew) {
+      ctx.strokeStyle = 'rgba(140,255,205,0.6)';
+      ctx.lineWidth = 1.4;
+      for (let i = -1; i <= 1; i++) {
+        ctx.beginPath();
+        ctx.arc(i * tw * 0.42, -r * 0.02, r * 0.26, 0.5, 2.3);
+        ctx.stroke();
+      }
+    }
+
+    const frontX = tw + r * b.arm * 0.92;
+    const frontY = shoulder - r * 0.04 - swing * r * 0.14;
+    ctx.strokeStyle = lit;
+    ctx.lineWidth = r * 0.22;
+    ctx.beginPath();
+    ctx.moveTo(r * 0.02, shoulder);
+    ctx.lineTo(frontX, frontY);
+    ctx.stroke();
+    ctx.fillStyle = lit;
+    ctx.beginPath(); ctx.arc(frontX, frontY, r * 0.14, 0, TAU); ctx.fill();
+
+    // Head.
+    const hr = r * b.head;
+    const hx = r * 0.16;
+    const hy = shoulder - hr * 0.9;
+    ctx.fillStyle = lit;
+    ctx.beginPath(); ctx.arc(hx, hy, hr, 0, TAU); ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+    ctx.beginPath(); ctx.arc(hx - hr * 0.34, hy + hr * 0.22, hr * 0.78, 0, TAU); ctx.fill();
+
+    if (b.visor) {
+      ctx.fillStyle = 'rgba(155,225,255,0.8)';
+      ctx.beginPath();
+      ctx.ellipse(hx + hr * 0.22, hy, hr * 0.6, hr * 0.4, -0.2, 0, TAU);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      ctx.beginPath();
+      ctx.ellipse(hx + hr * 0.05, hy - hr * 0.14, hr * 0.2, hr * 0.12, -0.3, 0, TAU);
+      ctx.fill();
+    } else if (b.maw) {
+      // Screamers are mid-howl: jaw dropped open, throat lit from within.
+      const gape = 0.7 + 0.3 * Math.sin(this.time * 12);
+      ctx.fillStyle = '#25060f';
+      ctx.beginPath();
+      ctx.ellipse(hx + hr * 0.42, hy + hr * 0.34, hr * 0.46, hr * 0.62 * gape, -0.25, 0, TAU);
+      ctx.fill();
+      ctx.fillStyle = `rgba(255,140,205,${0.55 + 0.35 * gape})`;
+      ctx.beginPath();
+      ctx.ellipse(hx + hr * 0.46, hy + hr * 0.4, hr * 0.2, hr * 0.3 * gape, -0.25, 0, TAU);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(10,4,4,0.85)';
+      ctx.beginPath(); ctx.arc(hx + hr * 0.2, hy - hr * 0.42, hr * 0.16, 0, TAU); ctx.fill();
+    } else {
+      ctx.fillStyle = 'rgba(10,4,4,0.82)';
+      ctx.beginPath(); ctx.arc(hx + hr * 0.42, hy - hr * 0.04, hr * 0.2, 0, TAU); ctx.fill();
+    }
+
+    ctx.restore();
+
+    if (boss) {
+      ctx.strokeStyle = `rgba(255,90,60,${0.5 + 0.3 * Math.sin(this.time * 4)})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, r + 4, 0, TAU);
+      ctx.stroke();
+    }
+
+    this.drawEnemyStatus(e, e.x, e.y, r);
+    this.drawEnemyHp(e, e.x, e.y, r, boss);
   }
 
   drawEnemyStatus(e, x, y, r) {
     const { ctx, game } = this;
     const now = game.clock;
 
+    // Status markers hug the body deliberately — at 100+ zombies, wide rings
+    // pile into an unreadable halo cloud.
     if (now < e.slowUntil) {
-      ctx.fillStyle = 'rgba(127,212,255,0.28)';
-      ctx.beginPath(); ctx.arc(x, y, r * 1.1, 0, TAU); ctx.fill();
+      ctx.fillStyle = 'rgba(127,212,255,0.22)';
+      ctx.beginPath(); ctx.arc(x, y, r * 0.95, 0, TAU); ctx.fill();
     }
     if (now < e.stunUntil) {
       ctx.strokeStyle = 'rgba(200,240,255,0.9)';
@@ -555,16 +936,16 @@ export class Renderer {
       ctx.beginPath(); ctx.arc(x + r * 0.3, y + r * 0.3, r * 0.4, 0, TAU); ctx.fill();
     }
     if (now < e.vulnUntil) {
-      ctx.strokeStyle = 'rgba(255,120,200,0.7)';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.arc(x, y, r * 1.3, 0, TAU); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,120,200,0.6)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.arc(x, y, r * 1.04, 0, TAU); ctx.stroke();
     }
     const resist = Math.max(now < e.resistUntil ? e.resist : 0, e.auraResist);
     if (resist > 0) {
-      ctx.strokeStyle = 'rgba(180,180,190,0.65)';
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgba(190,190,200,0.6)';
+      ctx.lineWidth = 1.8;
       ctx.setLineDash([3, 3]);
-      ctx.beginPath(); ctx.arc(x, y, r * 1.25, 0, TAU); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x, y, r * 1.12, 0, TAU); ctx.stroke();
       ctx.setLineDash([]);
     }
     if (e.def.traits?.aura) {
