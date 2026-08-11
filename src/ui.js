@@ -10,8 +10,11 @@ import { ENEMY_DEFS } from './enemies.js';
 const $ = (sel) => document.querySelector(sel);
 
 function fmt(n) {
-  if (n === Infinity || n >= 9999) return '∞';
-  if (n >= 10000) return `${(n / 1000).toFixed(1)}k`;
+  // Only a genuinely infinite value prints as ∞. Sentinel values (like the
+  // marksman's 9999 armour pierce) are labelled at their own call site.
+  if (!Number.isFinite(n)) return '∞';
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 10_000) return `${(n / 1000).toFixed(1)}k`;
   if (n >= 100) return String(Math.round(n));
   if (n >= 10) return n.toFixed(1);
   return n.toFixed(n < 1 ? 2 : 1);

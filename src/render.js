@@ -205,7 +205,7 @@ export class Renderer {
     ctx.stroke();
 
     ctx.fillStyle = COLORS.textDim;
-    ctx.font = '600 9px ui-monospace, monospace';
+    ctx.font = '800 10px "Big Shoulders", sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('BREACH', x, y + CELL * 0.95);
   }
@@ -244,7 +244,7 @@ export class Renderer {
     ctx.fillRect(x - bw / 2 + 1, y + CELL * 0.8 + 1, (bw - 2) * hpFrac, 4);
 
     ctx.fillStyle = COLORS.textDim;
-    ctx.font = '600 9px ui-monospace, monospace';
+    ctx.font = '800 10px "Big Shoulders", sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('CAMP', x, y - CELL * 0.85);
   }
@@ -720,7 +720,7 @@ export class Renderer {
   drawFloaters() {
     const { ctx } = this;
     ctx.textAlign = 'center';
-    ctx.font = '700 12px ui-monospace, monospace';
+    ctx.font = '500 13px "Plex Mono", ui-monospace, monospace';
     for (const f of this.game.floaters) {
       const k = Math.min(1, f.life / f.max);
       ctx.globalAlpha = k;
@@ -784,15 +784,15 @@ export class Renderer {
     if (!ok && view.placeCheck?.reason) {
       const cx = (x + 0.5) * CELL;
       const cy = y * CELL - 8;
-      ctx.font = '600 11px ui-monospace, monospace';
+      ctx.font = '600 12px "Barlow", system-ui, sans-serif';
       ctx.textAlign = 'center';
-      const w = ctx.measureText(view.placeCheck.reason).width + 14;
-      ctx.fillStyle = 'rgba(20,10,10,0.9)';
-      ctx.fillRect(cx - w / 2, cy - 13, w, 17);
-      ctx.strokeStyle = 'rgba(224,75,58,0.7)';
+      const w = ctx.measureText(view.placeCheck.reason).width + 16;
+      ctx.fillStyle = 'rgba(14,10,8,0.94)';
+      ctx.fillRect(cx - w / 2, cy - 14, w, 19);
+      ctx.strokeStyle = 'rgba(193,68,46,0.8)';
       ctx.lineWidth = 1;
-      ctx.strokeRect(cx - w / 2, cy - 13, w, 17);
-      ctx.fillStyle = '#ff9a8a';
+      ctx.strokeRect(cx - w / 2, cy - 14, w, 19);
+      ctx.fillStyle = '#ef7a5f';
       ctx.fillText(view.placeCheck.reason, cx, cy - 1);
     }
   }

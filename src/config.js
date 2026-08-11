@@ -131,36 +131,39 @@ export function upgradeCost(baseCost, level) {
   return Math.round(baseCost * 0.55 * Math.pow(1.6, level - 2));
 }
 
+// Canvas palette. Mirrors the CSS identity in src/styles.css: a warm
+// olive-biased ground with signal amber as the single accent, olive-drab for
+// "holding" and oxide red for danger.
 export const COLORS = {
-  ground: '#20241d',
-  groundAlt: '#242a20',
-  gridLine: 'rgba(255,255,255,0.028)',
-  route: 'rgba(190,150,70,0.10)',
-  routeLine: 'rgba(220,180,90,0.55)',
+  ground: '#1d2016',
+  groundAlt: '#232719',
+  gridLine: 'rgba(233,227,210,0.030)',
+  route: 'rgba(232,145,42,0.075)',
+  routeLine: 'rgba(232,145,42,0.5)',
 
-  rubble: '#33342f',
-  rubbleTop: '#3f4039',
-  wreck: '#3a2f2c',
-  wreckTop: '#4a3c37',
+  rubble: '#32332a',
+  rubbleTop: '#3d3e33',
+  wreck: '#3a2e28',
+  wreckTop: '#4a3a32',
   barrel: '#4a4326',
 
-  spawn: '#8c2f2a',
-  spawnGlow: 'rgba(200,60,50,0.35)',
-  base: '#b8a06a',
-  baseDark: '#7d6b45',
+  spawn: '#c1442e',
+  spawnGlow: 'rgba(193,68,46,0.35)',
+  base: '#c7ab6d',
+  baseDark: '#87703f',
 
   blood: '#6e1018',
-  toxic: '#8fd94a',
-  amber: '#ffb020',
-  danger: '#e04b3a',
+  toxic: '#a8b565',
+  amber: '#e8912a',
+  danger: '#ef7a5f',
   ice: '#7fd4ff',
   fire: '#ff8a2b',
   acidGreen: '#b6ff3d',
   arc: '#9fe6ff',
 
-  ok: '#6fcf5f',
-  text: '#dfe4d8',
-  textDim: '#8a9184',
+  ok: '#a8b565',
+  text: '#e9e3d2',
+  textDim: '#8b8874',
 };
 
 export const TARGET_MODES = [

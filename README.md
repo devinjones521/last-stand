@@ -3,15 +3,23 @@
 A maze-building zombie tower defense. Endless waves, deep upgrade trees, and
 **exactly one spawn point — forever.**
 
-## Run it
+### ▶ Play: <https://devinjones521.github.io/last-stand/>
+
+On Android or iOS, open that link and choose **Add to Home Screen** — it installs
+as a fullscreen app and works with no connection at all.
+
+## Run it locally
 
 ```bash
-npm start
+npm start     # http://localhost:8080
+npm test      # headless simulation suite
+npm run icons # regenerate app icons
 ```
 
-Then open <http://localhost:8080>. No dependencies, no build step. The server is
-a ~40-line static file server; it only exists because ES modules can't load over
-`file://`.
+No dependencies and no build step. The server is a ~40-line static file server;
+it only exists because ES modules can't load over `file://`. The service worker
+is deliberately **not** registered on localhost, so local edits are never
+shadowed by a stale cache.
 
 ---
 
@@ -50,6 +58,21 @@ the new route *before* you spend anything.
 Cash banked at the end of a wave earns 5% interest (capped at $150), so saving
 for one big upgrade genuinely beats dribbling it into chaff.
 
+### Difficulty
+
+Picked per run on the title screen. The whole curve moves together — enemy HP,
+your income, and how much camp you can afford to lose.
+
+| | HP curve | Start | Camp | Same build reaches* |
+|---|---|---|---|---|
+| **Relaxed** | `1.062^w` | $450 | 150 | wave 53 |
+| **Standard** | `1.075^w` | $300 | 100 | wave 39 |
+| **Brutal** | `1.088^w` | $250 | 80 | wave 21 |
+
+\* measured by the test suite running one identical maze + gun line on each
+setting, reinvesting all income between waves. Your best run is recorded per
+difficulty.
+
 ### Controls
 
 | Key | Action |
@@ -60,7 +83,7 @@ for one big upgrade genuinely beats dribbling it into chaff.
 | Right-click / `Esc` | Cancel build mode |
 | `Enter` | Send the next wave |
 | `Space` | Pause |
-| `S` | Cycle speed 1× → 2× → 3× |
+| `S` | Cycle speed 1× → 2× → 3× → 4× |
 | `U` / `X` | Upgrade / sell the selected tower |
 | `A` | Toggle auto-start |
 
@@ -114,10 +137,17 @@ can learn a run and plan for it.
 ## Code layout
 
 ```
-index.html          shell
-server.js           zero-dependency static server
+index.html            shell
+server.js             zero-dependency static server
+manifest.webmanifest  PWA metadata
+sw.js                 service worker (offline)
+fonts/                self-hosted woff2 — no CDN, works offline
+icons/                generated PNG app icons
+tools/
+  generate-icons.mjs  draws the icons (hand-rolled PNG encoder, no deps)
+  sim-test.mjs        headless simulation suite — npm test
 src/
-  config.js         ALL balance numbers, colours, map layout
+  config.js         ALL balance numbers, difficulties, colours, map layout
   towers.js         tower defs + upgrade/branch trees
   enemies.js        enemy defs + per-wave scaling
   waves.js          deterministic wave generation
@@ -127,7 +157,28 @@ src/
   ui.js             DOM sidebar, panels, overlays
   audio.js          synthesised SFX (no asset files)
   main.js           input, frame loop, wiring
+  styles.css        design tokens + the whole interface
 ```
+
+### Testing
+
+`npm test` runs the real `Game` class headlessly in Node — no DOM, no browser.
+It covers the seal rule, maze rerouting, full combat, every tower maxed, both
+branches of each, damage attribution, deterministic waves, the difficulty
+spread, and save/load (including migrating v1 saves). A 40-wave run simulates in
+well under a second, which is also the performance check.
+
+### Visual identity
+
+Field-expedient military and quarantine signage: stencilled crates, hazard tape,
+olive-drab kit. Signal amber (`#e8912a`) is the single accent; olive-drab and
+oxide red carry "holding" and "danger" so semantic colour never competes with
+it. Squared 2px corners and hairline rules instead of floating rounded cards.
+Type is Big Shoulders Display (stencil/display), Barlow (body), and IBM Plex
+Mono (every numeral, tabular) — all self-hosted under the OFL.
+
+It commits to a single dark theme on purpose; there is no light mode, and every
+colour is painted explicitly so nothing borrows a host background.
 
 ### Why a flow field instead of A*
 
