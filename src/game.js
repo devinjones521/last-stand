@@ -46,6 +46,9 @@ export class Game {
     this.balance = balanceFor(difficulty);
     // Bumped on every reset so the renderer knows to wipe its decal layer.
     this.epoch = (this.epoch ?? 0) + 1;
+    // Bumped whenever the set of towers changes, so the renderer knows when to
+    // re-bake its cached static tower art.
+    this.buildVersion = 0;
     // Append-only queue of permanent ground marks (blood, scorch). The renderer
     // drains it into an offscreen layer; capped so a headless run can't grow it
     // without bound.
@@ -190,6 +193,7 @@ export class Game {
     this.towerAt[idx(x, y)] = tower;
     this.cash -= def.cost;
     this.stats.spent += def.cost;
+    this.buildVersion++;
     this.rebuild();
     this.audio?.play('build');
     return { ok: true, tower };
@@ -200,6 +204,7 @@ export class Game {
     this.cash += refund;
     this.towers.splice(this.towers.indexOf(tower), 1);
     this.towerAt[idx(tower.x, tower.y)] = null;
+    this.buildVersion++;
     this.rebuild();
     this.audio?.play('sell');
     this.pushFloater(tower.x * CELL + CELL / 2, tower.y * CELL, `+$${refund}`, '#6fcf5f');
@@ -230,6 +235,7 @@ export class Game {
     tower.invested += cost;
     tower.level += 1;
     tower.stats = towerStats(tower.defId, tower.level, tower.branch);
+    this.buildVersion++;
     this.audio?.play('upgrade');
     return { ok: true };
   }
@@ -1088,6 +1094,7 @@ export class Game {
       this.towerAt[idx(t.x, t.y)] = tower;
     }
     this.phase = this.baseHp > 0 ? 'building' : 'over';
+    this.buildVersion++;
     this.rebuild();
     return true;
   }

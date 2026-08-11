@@ -202,8 +202,14 @@ Zombies share a single draw routine parameterised per archetype (`BODY` in
 `render.js` — torso width, head size, reach, stride speed, lean, plus flags like
 `legless`, `visor`, `maw`, `plates`). One renderer, ten distinct silhouettes.
 
+Static tower art (emplacements, sandbags, level pips, barricades) is baked into
+its own layer and only re-drawn when the tower set actually changes, tracked via
+`game.buildVersion`. Each frame then costs one `drawImage` plus the rotating
+turrets. Redrawing it live was ~20 fill operations per tower per frame.
+
 Whole-frame cost with 60+ towers and a live wave is about **1.7ms**, against a
-16.7ms budget — roughly 10% of one frame at 60fps.
+16.7ms budget. A pathological 459-tower board — every buildable cell filled —
+runs at **5.3ms** (~188fps); before the tower-art bake it was 22.7ms (~41fps).
 
 ### Why a flow field instead of A*
 
