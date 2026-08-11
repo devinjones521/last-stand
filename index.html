@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Last Stand — Maze Defense</title>
+<meta name="description" content="A maze-building zombie tower defense. One spawn point, endless waves, deep upgrade trees.">
+<link rel="stylesheet" href="src/styles.css">
+
+<!-- PWA: installable to a phone home screen, playable offline -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#171a15">
+<meta name="color-scheme" content="dark">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32.png">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Last Stand">
+</head>
+<body>
+
+<div id="app">
+
+  <header id="hud">
+    <div class="brand">
+      <span class="brand-main">LAST&nbsp;STAND</span>
+      <span class="brand-sub">one breach · endless dead</span>
+    </div>
+
+    <div class="stats">
+      <div class="stat" id="stat-cash" title="Scrap. Spend it on towers and upgrades.">
+        <span class="stat-label">SCRAP</span>
+        <span class="stat-value" id="v-cash">$0</span>
+      </div>
+      <div class="stat" id="stat-wave" title="Waves survived.">
+        <span class="stat-label">WAVE</span>
+        <span class="stat-value" id="v-wave">0</span>
+      </div>
+      <div class="stat" id="stat-hp" title="Camp integrity. Hits zero and the run ends.">
+        <span class="stat-label">CAMP</span>
+        <span class="stat-value" id="v-hp">100</span>
+        <div class="hpbar"><i id="v-hpbar"></i></div>
+      </div>
+      <div class="stat" id="stat-kills" title="Total kills this run.">
+        <span class="stat-label">KILLS</span>
+        <span class="stat-value" id="v-kills">0</span>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button id="btn-pause" class="ctl" title="Pause / resume  (Space)">❚❚</button>
+      <div class="speeds" role="group" aria-label="Game speed">
+        <button class="ctl spd is-on" data-speed="1" title="Normal speed  (S cycles)">1×</button>
+        <button class="ctl spd" data-speed="2" title="Double speed  (S cycles)">2×</button>
+        <button class="ctl spd" data-speed="3" title="Triple speed  (S cycles)">3×</button>
+        <button class="ctl spd" data-speed="4" title="Quadruple speed  (S cycles)">4×</button>
+      </div>
+      <button id="btn-sound" class="ctl" title="Mute / unmute sound">🔊</button>
+      <button id="btn-menu" class="ctl" title="Save, restart, help">☰</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="stage">
+      <canvas id="game"></canvas>
+      <div id="toast"></div>
+      <div id="banner"></div>
+    </div>
+
+    <aside id="side">
+
+      <section class="panel" id="panel-wave">
+        <div class="panel-head">
+          <h2>Next Wave</h2>
+          <span class="chip" id="wave-flavour">Horde</span>
+        </div>
+        <div id="wave-preview" class="wave-preview"></div>
+        <button id="btn-start" class="primary">
+          <span id="start-label">Send Wave 1</span>
+          <small id="start-hint">Build as long as you like — nothing starts without you</small>
+        </button>
+        <label class="toggle">
+          <input type="checkbox" id="chk-auto">
+          <span>Auto-start next wave</span>
+        </label>
+      </section>
+
+      <section class="panel" id="panel-build">
+        <div class="panel-head">
+          <h2>Build</h2>
+          <span class="hint">Esc to cancel</span>
+        </div>
+        <div id="build-list" class="build-list"></div>
+      </section>
+
+      <section class="panel" id="panel-detail">
+        <div id="detail"></div>
+      </section>
+
+      <section class="panel" id="panel-camp">
+        <div class="panel-head"><h2>Camp</h2></div>
+        <button id="btn-repair" class="ghost wide">Repair +25 — $120</button>
+      </section>
+
+    </aside>
+  </main>
+
+</div>
+
+<!-- Full-screen overlays: title, game over, menu -->
+<div id="overlay" class="overlay hidden">
+  <div class="overlay-card" id="overlay-card"></div>
+</div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "name": "last-stand",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Last Stand - a maze-building zombie tower defense. One spawn. Endless waves.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "node tools/sim-test.mjs",
+    "icons": "node tools/generate-icons.mjs"
+  }
+}
