@@ -429,6 +429,54 @@ button.ghost.sell.wide { width: 100%; flex: none; }
 .tg:hover { color: var(--canvas); }
 .tg.is-on { border-color: var(--hazard); color: var(--hazard); background: #2a2312; }
 
+/* -- commander abilities -------------------------------------------------- */
+
+#abilities {
+  position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 6px; z-index: 3;
+}
+
+.ab {
+  position: relative; overflow: hidden;
+  width: 84px; padding: 9px 0 7px;
+  background: rgba(20,22,14,.92);
+  border: 1px solid var(--rule);
+  border-top: 2px solid var(--hazard-dim);
+  transition: border-color .12s, background .12s, transform .08s;
+}
+.ab:hover:not(.cooling) { background: rgba(40,44,28,.96); border-top-color: var(--hazard); }
+.ab:active { transform: translateY(1px); }
+
+/* Cooldown drains downward, so a full bar reads as "not yet". */
+.ab-sweep {
+  position: absolute; inset: auto 0 0 0; height: 0;
+  background: rgba(10,12,7,.82); pointer-events: none;
+  transition: height .1s linear;
+}
+.ab-body { position: relative; display: block; text-align: center; }
+.ab-name {
+  display: block; font-family: var(--display); font-weight: 800;
+  font-size: var(--t-base); letter-spacing: .14em; color: var(--hazard);
+}
+.ab-key {
+  display: block; margin-top: 2px;
+  font-family: var(--mono); font-size: 9px; color: var(--faint);
+}
+.ab-cd {
+  position: absolute; inset: 0; display: flex;
+  align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 17px; font-weight: 500;
+  color: var(--canvas); text-shadow: 0 1px 6px #000; pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+.ab.cooling { cursor: default; border-top-color: var(--rule); }
+.ab.cooling .ab-name, .ab.cooling .ab-key { opacity: .3; }
+.ab.aiming {
+  border-color: var(--hazard); border-top-color: var(--hazard);
+  background: rgba(70,48,14,.96);
+  box-shadow: 0 0 0 1px var(--hazard) inset, 0 0 18px rgba(232,145,42,.4);
+}
+
 /* -- toast & banner ------------------------------------------------------- */
 
 #toast {

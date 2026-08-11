@@ -2,7 +2,7 @@
 // Bootstrap: canvas sizing, input, the frame loop, and wiring UI to Game.
 // ---------------------------------------------------------------------------
 
-import { CANVAS_W, CANVAS_H, GRID, COLORS, DIFFICULTIES } from './config.js';
+import { CANVAS_W, CANVAS_H, GRID, COLORS, DIFFICULTIES, ABILITIES } from './config.js';
 import { TOWER_ORDER } from './towers.js';
 import { idx } from './pathfinding.js';
 import { Game } from './game.js';
@@ -23,6 +23,7 @@ const view = {
   hoverTower: null,
   placeCheck: null,
   previewRoute: null,
+  aiming: null,   // id of a targeted ability waiting for a map click
 };
 
 /** Difficulty picked on the title screen; applied when a new run starts. */
@@ -100,6 +101,12 @@ canvas.addEventListener('pointerdown', (ev) => {
   // Keep receiving moves even if the finger/cursor slides off the canvas.
   canvas.setPointerCapture?.(ev.pointerId);
   const cell = cellFromEvent(ev);
+
+  // A targeted ability is armed: this click is the target, not a build action.
+  if (view.aiming) {
+    fireAbility(view.aiming, cell);
+    return;
+  }
 
   if (view.buildId) {
     dragging = true;
@@ -181,12 +188,18 @@ window.addEventListener('keydown', (ev) => {
   if (k === 'escape') {
     if (!document.getElementById('overlay').classList.contains('hidden')) {
       if (game.phase !== 'over') closeOverlay();
+    } else if (view.aiming) {
+      view.aiming = null;
+      ui.refresh(true);
     } else {
       ui.clearSelection();
       lastHoverKey = '';
     }
     return;
   }
+
+  const ability = ABILITIES.find((a) => a.key === k);
+  if (ability) { triggerAbility(ability.id); return; }
 
   if (ev.key >= '1' && ev.key <= '8') {
     const id = TOWER_ORDER[Number(ev.key) - 1];
@@ -222,9 +235,47 @@ window.addEventListener('keydown', (ev) => {
 
 // -- actions ----------------------------------------------------------------
 
+/** Resolve a commander ability, with feedback either way. */
+function fireAbility(id, cell) {
+  const res = game.useAbility(id, cell);
+  view.aiming = null;
+  if (res.ok) {
+    ui.toast(`${res.def.name} away`, 'good');
+  } else {
+    ui.toast(res.reason, 'bad');
+    audio.play('deny');
+  }
+  ui.refresh(true);
+}
+
+/**
+ * Untargeted abilities fire immediately; targeted ones arm and wait for a map
+ * click. Pressing the same one again disarms it.
+ */
+function triggerAbility(id) {
+  const def = game.abilityDef(id);
+  if (!def) return;
+
+  if (game.abilityCooldownLeft(id) > 0) {
+    ui.toast(`${def.name} recharging — ${Math.ceil(game.abilityCooldownLeft(id))}s`, 'bad');
+    audio.play('deny');
+    return;
+  }
+  if (!def.targeted) { fireAbility(id, null); return; }
+
+  view.aiming = view.aiming === id ? null : id;
+  view.buildId = null;
+  view.previewRoute = null;
+  if (view.aiming) ui.toast(`${def.name} — click a spot on the map`);
+  ui.refresh(true);
+}
+
 function doAction(action, arg) {
   audio.init();
   switch (action) {
+    case 'ability':
+      triggerAbility(arg);
+      return;
     case 'start': {
       if (game.phase === 'over') break;
       const res = game.startWave();

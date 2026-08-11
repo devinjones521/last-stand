@@ -3,7 +3,7 @@
 // Reads game state; mutates it only through Game's public methods.
 // ---------------------------------------------------------------------------
 
-import { TARGET_MODES, DIFFICULTIES, DIFFICULTY_ORDER } from './config.js';
+import { TARGET_MODES, DIFFICULTIES, DIFFICULTY_ORDER, ABILITIES } from './config.js';
 import { TOWER_DEFS, TOWER_ORDER, towerStats, towerTitle, nextUpgradeCost } from './towers.js';
 import { ENEMY_DEFS } from './enemies.js';
 
@@ -79,8 +79,49 @@ export class UI {
 
   mount() {
     this.buildPalette();
+    this.buildAbilityBar();
     this.wireControls();
     this.refresh(true);
+  }
+
+  // -- commander abilities -------------------------------------------------
+
+  buildAbilityBar() {
+    const bar = $('#abilities');
+    bar.innerHTML = '';
+    for (const a of ABILITIES) {
+      const b = document.createElement('button');
+      b.className = 'ab';
+      b.dataset.id = a.id;
+      b.title = `${a.name} — ${a.blurb}`;
+      b.innerHTML = `
+        <span class="ab-sweep"></span>
+        <span class="ab-body">
+          <span class="ab-name">${a.short}</span>
+          <span class="ab-key">${a.key.toUpperCase()}</span>
+        </span>
+        <span class="ab-cd"></span>`;
+      b.addEventListener('click', () => this.onAction('ability', a.id));
+      bar.appendChild(b);
+    }
+  }
+
+  /** Cheap per-frame pass: only the cooldown sweep and ready/aiming state. */
+  refreshAbilities() {
+    const g = this.game;
+    for (const el of document.querySelectorAll('.ab')) {
+      const id = el.dataset.id;
+      const def = g.abilityDef(id);
+      const left = g.abilityCooldownLeft(id);
+      const frac = left > 0 ? left / def.cooldown : 0;
+
+      el.classList.toggle('cooling', left > 0);
+      el.classList.toggle('aiming', this.view.aiming === id);
+      el.querySelector('.ab-sweep').style.height = `${frac * 100}%`;
+      const cd = el.querySelector('.ab-cd');
+      const label = left > 0 ? String(Math.ceil(left)) : '';
+      if (cd.textContent !== label) cd.textContent = label;
+    }
   }
 
   // -- build palette -------------------------------------------------------
@@ -114,6 +155,7 @@ export class UI {
     const v = this.view;
     v.buildId = v.buildId === id ? null : id;
     v.selected = null;
+    v.aiming = null;
     v.buildStats = v.buildId ? towerStats(v.buildId, 1, null) : null;
     this.audio.play('ui');
     this.refresh(true);
@@ -129,6 +171,7 @@ export class UI {
     this.view.buildId = null;
     this.view.selected = null;
     this.view.previewRoute = null;
+    this.view.aiming = null;
     this.refresh(true);
   }
 
@@ -168,6 +211,8 @@ export class UI {
   refresh(force = false) {
     const g = this.game;
     const c = this.cache;
+
+    this.refreshAbilities();
 
     const cash = Math.floor(g.cash);
     if (force || c.cash !== cash) {
@@ -515,6 +560,7 @@ export class UI {
         <li><kbd>Click</kbd> place it, or click a placed tower to inspect it</li>
         <li><kbd>Click-drag</kbd> with Barricade selected to lay a whole run at once</li>
         <li><kbd>Right-click</kbd> / <kbd>Esc</kbd> cancel build mode</li>
+        <li><kbd>Q</kbd> airstrike &nbsp; <kbd>W</kbd> rally flare &nbsp; <kbd>E</kbd> overcharge &nbsp; <kbd>R</kbd> cryo burst</li>
         <li><kbd>Enter</kbd> send the next wave &nbsp; <kbd>Space</kbd> pause</li>
         <li><kbd>S</kbd> cycle speed 1× → 2× → 3×</li>
         <li><kbd>U</kbd> upgrade selected &nbsp; <kbd>X</kbd> sell selected</li>

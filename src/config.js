@@ -166,6 +166,66 @@ export const COLORS = {
   textDim: '#8b8874',
 };
 
+/**
+ * Commander abilities — the thing you actually DO while a wave is running.
+ *
+ * Deliberately on cooldowns and never on scrap: they must never compete with
+ * building up your defenses, only add to what you can do with them. Cooldowns
+ * tick on the game clock, so they also recharge between waves.
+ *
+ * Damage is partly a fraction of the target's max HP so a single fixed number
+ * doesn't fall off a cliff by wave 60.
+ */
+export const ABILITIES = [
+  {
+    id: 'airstrike',
+    name: 'Airstrike',
+    short: 'AIR',
+    key: 'q',
+    cooldown: 45,
+    targeted: true,
+    blurb: 'Call a shell down on a point you pick. Heavy explosive damage over a wide radius.',
+    radius: 2.9,
+    delay: 0.85,
+    flatDamage: 220,
+    hpFraction: 0.15,
+  },
+  {
+    id: 'flare',
+    name: 'Rally Flare',
+    short: 'RALLY',
+    key: 'w',
+    cooldown: 38,
+    targeted: true,
+    blurb: 'The horde walks to the flare instead of your camp. Drag them back through your maze for another lap.',
+    duration: 6.5,
+  },
+  {
+    id: 'overcharge',
+    name: 'Overcharge',
+    short: 'BOOST',
+    key: 'e',
+    cooldown: 50,
+    targeted: false,
+    blurb: 'Every tower fires 60% faster and hits 35% harder for 8 seconds.',
+    duration: 8,
+    rateMult: 1.6,
+    damageMult: 1.35,
+  },
+  {
+    id: 'cryoburst',
+    name: 'Cryo Burst',
+    short: 'FREEZE',
+    key: 'r',
+    cooldown: 42,
+    targeted: false,
+    blurb: 'Flash-freezes the whole field. Everything stops dead, then crawls. Your panic button.',
+    duration: 5,
+    stun: 1.2,
+    slowFactor: 0.35,
+  },
+];
+
 export const TARGET_MODES = [
   { id: 'first', name: 'First', hint: 'Closest to your camp' },
   { id: 'last', name: 'Last', hint: 'Furthest from your camp' },

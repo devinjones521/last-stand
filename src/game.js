@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import {
-  GRID, SPAWN, GOAL, OBSTACLES, CANVAS_W, CANVAS_H, balanceFor,
+  GRID, SPAWN, GOAL, OBSTACLES, CANVAS_W, CANVAS_H, balanceFor, ABILITIES,
 } from './config.js';
 import {
   CELL_COUNT, idx, computeField, nextStep, traceRoute,
@@ -26,6 +26,8 @@ export class Game {
     this.blocked = new Uint8Array(CELL_COUNT); // terrain + towers
     this.field = new Int32Array(CELL_COUNT);
     this.testField = new Int32Array(CELL_COUNT);
+    // Second flow field, aimed at an active Rally Flare instead of the camp.
+    this.lureField = new Int32Array(CELL_COUNT);
     this.towerAt = new Array(CELL_COUNT).fill(null);
 
     for (const o of OBSTACLES) {
@@ -62,6 +64,14 @@ export class Game {
     this.floaters = [];
     this.pending = [];
     this.runningWaves = [];
+    this.strikes = [];
+
+    // Commander abilities: id -> game-clock time when it comes off cooldown.
+    this.abilityReadyAt = {};
+    for (const a of ABILITIES) this.abilityReadyAt[a.id] = 0;
+    this.lure = null;
+    this.overchargeUntil = -1;
+    this.overcharge = null;
 
     this.cash = this.balance.startCash;
     this.baseHp = this.balance.startBaseHp;
@@ -86,6 +96,8 @@ export class Game {
     for (const t of this.towers) this.blocked[idx(t.x, t.y)] = 1;
     computeField(this.blocked, GOAL.x, GOAL.y, this.field);
     this.route = traceRoute(this.field, SPAWN.x, SPAWN.y);
+    // A live flare's field has to follow the maze changing under it.
+    if (this.lure) computeField(this.blocked, this.lure.x, this.lure.y, this.lureField);
 
     // Defensive: if anything is standing on a now-blocked cell or heading into
     // one, re-point it. Placement rules should prevent this, but never strand.
@@ -96,8 +108,20 @@ export class Game {
     }
   }
 
+  /**
+   * Which flow field this enemy should follow. A Rally Flare overrides the
+   * camp, but only where the flare is actually reachable — otherwise the enemy
+   * would be stranded, so it falls back to walking at the camp as normal.
+   */
+  fieldFor(e) {
+    if (this.lure && this.clock < this.lure.until) {
+      if (this.lureField[idx(e.cx, e.cy)] >= 0) return this.lureField;
+    }
+    return this.field;
+  }
+
   retarget(e) {
-    const step = nextStep(this.field, e.cx, e.cy, e.dx, e.dy);
+    const step = nextStep(this.fieldFor(e), e.cx, e.cy, e.dx, e.dy);
     if (step) {
       e.tx = step.x; e.ty = step.y; e.dx = step.dx; e.dy = step.dy;
     } else {
@@ -334,6 +358,107 @@ export class Game {
     return e;
   }
 
+  // -- commander abilities -------------------------------------------------
+
+  abilityDef(id) {
+    return ABILITIES.find((a) => a.id === id) ?? null;
+  }
+
+  /** Seconds until an ability is usable again; 0 means ready now. */
+  abilityCooldownLeft(id) {
+    return Math.max(0, (this.abilityReadyAt[id] ?? 0) - this.clock);
+  }
+
+  /**
+   * Fire a commander ability. `cell` is required for targeted ones.
+   * These never cost scrap - only time.
+   */
+  useAbility(id, cell = null) {
+    const def = this.abilityDef(id);
+    if (!def) return { ok: false, reason: 'Unknown ability' };
+    if (this.phase === 'over') return { ok: false, reason: 'Run is over' };
+
+    const left = this.abilityCooldownLeft(id);
+    if (left > 0) return { ok: false, reason: `Ready in ${Math.ceil(left)}s` };
+
+    if (def.targeted) {
+      if (!cell || !this.inBounds(cell.x, cell.y)) return { ok: false, reason: 'Pick a spot on the map' };
+      if (id === 'flare' && this.blocked[idx(cell.x, cell.y)]) {
+        return { ok: false, reason: 'The flare needs open ground' };
+      }
+    }
+
+    switch (id) {
+      case 'airstrike': {
+        this.strikes.push({
+          x: (cell.x + 0.5) * CELL, y: (cell.y + 0.5) * CELL,
+          t: 0, dur: def.delay,
+          radius: def.radius * CELL,
+          flat: def.flatDamage, frac: def.hpFraction,
+        });
+        this.audio?.play('mortar');
+        break;
+      }
+      case 'flare': {
+        this.lure = { x: cell.x, y: cell.y, until: this.clock + def.duration };
+        computeField(this.blocked, cell.x, cell.y, this.lureField);
+        for (const e of this.enemies) this.retarget(e);
+        this.effects.push({
+          kind: 'pulse', x: (cell.x + 0.5) * CELL, y: (cell.y + 0.5) * CELL,
+          r: CELL * 5, life: 0.6, max: 0.6, color: '#ffd24a',
+        });
+        this.audio?.play('wavestart');
+        break;
+      }
+      case 'overcharge': {
+        this.overchargeUntil = this.clock + def.duration;
+        this.overcharge = { rate: def.rateMult, damage: def.damageMult };
+        this.audio?.play('upgrade');
+        break;
+      }
+      case 'cryoburst': {
+        for (const e of this.enemies) {
+          if (e.dead) continue;
+          this.applyStun(e, def.stun);
+          this.applySlow(e, def.slowFactor, def.duration);
+        }
+        this.effects.push({
+          kind: 'pulse', x: CANVAS_W / 2, y: CANVAS_H / 2,
+          r: Math.max(CANVAS_W, CANVAS_H), life: 0.7, max: 0.7, color: '#a5e8ff',
+        });
+        this.audio?.play('zap');
+        break;
+      }
+      default:
+        return { ok: false, reason: 'Unknown ability' };
+    }
+
+    this.abilityReadyAt[id] = this.clock + def.cooldown;
+    return { ok: true, def };
+  }
+
+  updateStrikes(dt) {
+    for (let i = this.strikes.length - 1; i >= 0; i--) {
+      const s = this.strikes[i];
+      s.t += dt;
+      if (s.t < s.dur) continue;
+
+      for (const e of this.enemiesInRadius(s.x, s.y, s.radius)) {
+        const d = Math.hypot(e.x - s.x, e.y - s.y);
+        const falloff = 1 - 0.4 * (d / s.radius);
+        this.damage(e, (s.flat + e.maxHp * s.frac) * falloff, 'explosive', { armorPen: 6 });
+      }
+      this.effects.push({
+        kind: 'explosion', x: s.x, y: s.y, r: s.radius,
+        life: 0.5, max: 0.5, color: '#ffb020',
+      });
+      this.pushDecal('scorch', s.x, s.y, s.radius * 0.8, '#000000');
+      this.shake = Math.max(this.shake, 16);
+      this.audio?.play('boom');
+      this.strikes.splice(i, 1);
+    }
+  }
+
   // -- combat helpers ------------------------------------------------------
 
   effectiveArmor(e) {
@@ -362,6 +487,10 @@ export class Game {
 
     const resist = Math.max(this.clock < e.resistUntil ? e.resist : 0, e.auraResist);
     dmg *= 1 - resist;
+
+    // Overcharge boosts anything a tower is responsible for, including the
+    // damage-over-time it applied.
+    if (opts.src && this.clock < this.overchargeUntil) dmg *= this.overcharge.damage;
 
     // Credit the tower that caused it, so the UI can show what's pulling weight.
     if (opts.src) {
@@ -483,7 +612,14 @@ export class Game {
     }
     this.clock += dt;
 
+    // A Rally Flare expiring sends everyone back to walking at the camp.
+    if (this.lure && this.clock >= this.lure.until) {
+      this.lure = null;
+      for (const e of this.enemies) this.retarget(e);
+    }
+
     this.updateSpawns();
+    this.updateStrikes(dt);
     this.updateAuras();
     this.updateEnemies(dt);
     this.updatePuddles(dt);
@@ -583,7 +719,7 @@ export class Game {
         e.cx = e.tx; e.cy = e.ty;
 
         if (e.cx === GOAL.x && e.cy === GOAL.y) { this.leak(e); return; }
-        const step = nextStep(this.field, e.cx, e.cy, e.dx, e.dy);
+        const step = nextStep(this.fieldFor(e), e.cx, e.cy, e.dx, e.dy);
         if (!step) break; // stranded (shouldn't happen) - just idle
         e.tx = step.x; e.ty = step.y; e.dx = step.dx; e.dy = step.dy;
       } else {
@@ -664,7 +800,7 @@ export class Game {
 
       // Auras don't aim - they just pulse.
       if (s.attack === 'aura') {
-        t.cooldown -= dt;
+        t.cooldown -= dt * (this.clock < this.overchargeUntil ? this.overcharge.rate : 1);
         if (t.cooldown <= 0) {
           t.cooldown = 1 / s.fireRate;
           this.pulseAura(t, s, rangePx);
@@ -686,7 +822,8 @@ export class Game {
         t.spin = Math.max(0, t.spin - dt * 0.8);
       }
 
-      const rateMult = s.spinUp ? 1 + (s.spinUp.maxMult - 1) * t.spin : 1;
+      let rateMult = s.spinUp ? 1 + (s.spinUp.maxMult - 1) * t.spin : 1;
+      if (this.clock < this.overchargeUntil) rateMult *= this.overcharge.rate;
       t.cooldown -= dt * rateMult;
       if (t.cooldown > 0) continue;
 

@@ -4,6 +4,7 @@
 
 import { GRID, CANVAS_W, CANVAS_H, SPAWN, GOAL, OBSTACLES, COLORS } from './config.js';
 import { TOWER_DEFS } from './towers.js';
+import { idx } from './pathfinding.js';
 
 const CELL = GRID.cell;
 const TAU = Math.PI * 2;
@@ -241,6 +242,7 @@ export class Renderer {
     this.drawEnemies();
     this.drawProjectiles();
     this.drawAirEffects();
+    this.drawAbilityFx(view);
 
     // Night falls after the world is drawn, so everything sits in real dark and
     // only muzzle flashes, fires and the camp lamps carve it back open.
@@ -335,6 +337,17 @@ export class Renderer {
 
     for (const p of game.puddles) {
       out.push({ x: p.x, y: p.y, r: p.radius * 1.7, a: Math.min(1, p.life / 1.5) * 0.95 });
+    }
+
+    // A burning rally flare throws real light.
+    if (game.lure && game.clock < game.lure.until) {
+      out.push({
+        x: (game.lure.x + 0.5) * CELL, y: (game.lure.y + 0.5) * CELL,
+        r: 150 + Math.sin(this.time * 18) * 10, a: 1,
+      });
+    }
+    for (const s of game.strikes) {
+      out.push({ x: s.x, y: s.y, r: s.radius * (0.6 + s.t / s.dur), a: 0.7 });
     }
 
     for (const fx of game.effects) {
@@ -1121,6 +1134,93 @@ export class Renderer {
           ctx.stroke();
         }
       }
+    }
+  }
+
+  /** Rally flare, incoming airstrikes, the aiming reticle, overcharge tint. */
+  drawAbilityFx(view) {
+    const { ctx, game } = this;
+
+    // Rally flare: a burning marker the horde is walking towards.
+    if (game.lure && game.clock < game.lure.until) {
+      const x = (game.lure.x + 0.5) * CELL;
+      const y = (game.lure.y + 0.5) * CELL;
+      const left = game.lure.until - game.clock;
+      const flick = 0.7 + 0.3 * Math.sin(this.time * 22);
+
+      ctx.strokeStyle = `rgba(255,210,74,${0.5 + 0.3 * Math.sin(this.time * 5)})`;
+      ctx.lineWidth = 2;
+      for (let i = 0; i < 3; i++) {
+        ctx.beginPath();
+        ctx.arc(x, y, 12 + i * 11 + Math.sin(this.time * 4 - i) * 3, 0, TAU);
+        ctx.stroke();
+      }
+      ctx.fillStyle = `rgba(255,235,150,${flick})`;
+      ctx.beginPath(); ctx.arc(x, y, 7, 0, TAU); ctx.fill();
+
+      // Remaining duration as a shrinking arc.
+      ctx.strokeStyle = 'rgba(255,210,74,0.9)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(x, y, 20, -Math.PI / 2, -Math.PI / 2 + TAU * (left / 6.5));
+      ctx.stroke();
+    }
+
+    // Incoming airstrike: a reticle closing on the impact point.
+    for (const s of game.strikes) {
+      const k = Math.min(1, s.t / s.dur);
+      const r = s.radius * (1.9 - k * 0.9);
+      ctx.strokeStyle = `rgba(255,120,60,${0.4 + k * 0.6})`;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 5]);
+      ctx.lineDashOffset = -this.time * 40;
+      ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, TAU); ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.strokeStyle = `rgba(255,180,90,${0.5 + k * 0.5})`;
+      ctx.lineWidth = 1.5;
+      for (const a of [0, Math.PI / 2, Math.PI, Math.PI * 1.5]) {
+        ctx.beginPath();
+        ctx.moveTo(s.x + Math.cos(a) * (r - 9), s.y + Math.sin(a) * (r - 9));
+        ctx.lineTo(s.x + Math.cos(a) * (r + 9), s.y + Math.sin(a) * (r + 9));
+        ctx.stroke();
+      }
+    }
+
+    // Overcharge: a hot rim around the whole board.
+    if (game.clock < game.overchargeUntil) {
+      const pulse = 0.5 + 0.5 * Math.sin(this.time * 9);
+      ctx.strokeStyle = `rgba(232,145,42,${0.35 + pulse * 0.4})`;
+      ctx.lineWidth = 5;
+      ctx.strokeRect(2.5, 2.5, CANVAS_W - 5, CANVAS_H - 5);
+    }
+
+    // Reticle under the cursor while a targeted ability is armed.
+    if (view.aiming && view.hover) {
+      const def = game.abilityDef(view.aiming);
+      const x = (view.hover.x + 0.5) * CELL;
+      const y = (view.hover.y + 0.5) * CELL;
+      const blocked = view.aiming === 'flare'
+        && game.blocked[idx(view.hover.x, view.hover.y)];
+      const tint = blocked ? '224,75,58' : '255,190,90';
+
+      if (def.radius) {
+        ctx.fillStyle = `rgba(${tint},0.1)`;
+        ctx.beginPath(); ctx.arc(x, y, def.radius * CELL, 0, TAU); ctx.fill();
+      }
+      ctx.strokeStyle = `rgba(${tint},0.95)`;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([7, 5]);
+      ctx.lineDashOffset = -this.time * 30;
+      ctx.beginPath();
+      ctx.arc(x, y, (def.radius ? def.radius * CELL : CELL * 0.9), 0, TAU);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.beginPath();
+      ctx.moveTo(x - 11, y); ctx.lineTo(x + 11, y);
+      ctx.moveTo(x, y - 11); ctx.lineTo(x, y + 11);
+      ctx.stroke();
     }
   }
 

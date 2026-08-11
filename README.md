@@ -82,6 +82,27 @@ the new route *before* you spend anything.
 Cash banked at the end of a wave earns 5% interest (capped at $150), so saving
 for one big upgrade genuinely beats dribbling it into chaff.
 
+### Commander abilities
+
+Four powers on cooldowns, bound to <kbd>Q</kbd> <kbd>W</kbd> <kbd>E</kbd> <kbd>R</kbd>.
+They **never cost scrap** — only time — so they add to what you can do without
+ever competing with building up your defenses.
+
+![Rally Flare dragging the horde off-path](docs/abilities.jpg)
+
+| | Ability | Does |
+|---|---|---|
+| <kbd>Q</kbd> | **Airstrike** | Shell onto a point you pick. Damage is partly a fraction of max HP, so it never falls off late. |
+| <kbd>W</kbd> | **Rally Flare** | The horde walks to the flare instead of your camp — drag them back through your maze for another lap. |
+| <kbd>E</kbd> | **Overcharge** | Every tower fires 60% faster and hits 35% harder for 8s. |
+| <kbd>R</kbd> | **Cryo Burst** | Freezes the whole field, then leaves it crawling. Panic button. |
+
+The flare is the interesting one mechanically: it computes a **second flow
+field** aimed at the flare instead of the camp, and enemies follow whichever
+field applies to them — falling back to the camp field where the flare isn't
+reachable, so nothing can ever be stranded. Since towers are walls, a
+well-placed flare can walk the horde through your whole maze twice.
+
 ### Difficulty
 
 Picked per run on the title screen. The whole curve moves together — enemy HP,

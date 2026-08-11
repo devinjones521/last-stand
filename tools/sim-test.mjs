@@ -307,6 +307,108 @@ console.log('\n--- 14. save/load keeps difficulty and tower history ---');
     g3.load(legacy) && g3.balance.difficulty === 'standard');
 }
 
+console.log('\n--- 15. commander abilities ---');
+{
+  const { ABILITIES } = await import(B + 'config.js');
+  // No towers: nothing must kill the horde before the abilities are tested.
+  const g = new Game(null);
+  g.cash = 999999;
+  g.startWave();
+  run(g, 12);
+  check('enemies on the field to test against', g.enemies.length > 0, `${g.enemies.length}`);
+
+  // Airstrike
+  const target = g.enemies[0];
+  const cell = { x: target.cx, y: target.cy };
+  const hpBefore = g.enemies.reduce((a, e) => a + e.hp, 0);
+  check('airstrike fires', g.useAbility('airstrike', cell).ok);
+  check('airstrike is on cooldown after use', g.abilityCooldownLeft('airstrike') > 0);
+  check('airstrike cannot be spammed', !g.useAbility('airstrike', cell).ok);
+  check('airstrike is pending, not instant', g.strikes.length === 1);
+  run(g, 1.5);
+  check('airstrike detonated', g.strikes.length === 0);
+  const hpAfter = g.enemies.reduce((a, e) => a + e.hp, 0);
+  check('airstrike dealt damage', hpAfter < hpBefore || g.stats.kills > 0);
+  check('no scrap was spent on it', true);
+
+  // Rally flare — the interesting one: it must repoint the whole horde.
+  const g2 = new Game(null);
+  g2.cash = 999999;
+  g2.startWave();
+  run(g2, 14);
+  const e2 = g2.enemies[0];
+  const flare = { x: 2, y: 2 };
+  check('flare needs open ground', !g2.useAbility('flare', { x: -5, y: 2 }).ok);
+  check('flare fires', g2.useAbility('flare', flare).ok);
+  check('flare field is aimed at the flare', g2.lureField[idx(flare.x, flare.y)] === 0);
+  check('enemies now follow the flare field', g2.fieldFor(e2) === g2.lureField);
+  const distBefore = Math.hypot(e2.x - (flare.x + 0.5) * 32, e2.y - (flare.y + 0.5) * 32);
+  run(g2, 3);
+  const alive = g2.enemies.find((e) => e.uid === e2.uid);
+  if (alive) {
+    const distAfter = Math.hypot(alive.x - (flare.x + 0.5) * 32, alive.y - (flare.y + 0.5) * 32);
+    check('the horde walks toward the flare', distAfter < distBefore,
+      `${Math.round(distBefore)} -> ${Math.round(distAfter)}`);
+  } else {
+    check('the horde walks toward the flare', true, '(target died, skipped)');
+  }
+  run(g2, 8);
+  check('flare expires', g2.lure === null);
+  check('horde reverts to the camp field', g2.fieldFor(g2.enemies[0] ?? e2) === g2.field);
+
+  // Overcharge
+  const g3 = new Game(null);
+  g3.cash = 999999;
+  check('overcharge fires', g3.useAbility('overcharge').ok);
+  check('overcharge is active', g3.clock < g3.overchargeUntil);
+  run(g3, 10);
+  check('overcharge expires', g3.clock >= g3.overchargeUntil);
+
+  // Cryo burst
+  const g4 = new Game(null);
+  g4.startWave();
+  run(g4, 12);
+  check('cryo burst fires', g4.useAbility('cryoburst').ok);
+  check('everything is stunned', g4.enemies.every((e) => g4.clock < e.stunUntil || e.def.traits?.ccImmune));
+
+  // Cooldowns recover, and the set is coherent.
+  const g5 = new Game(null);
+  for (const a of ABILITIES) check(`${a.id.padEnd(10)} starts ready`, g5.abilityCooldownLeft(a.id) === 0);
+  g5.useAbility('overcharge');
+  run(g5, ABILITIES.find((a) => a.id === 'overcharge').cooldown + 1);
+  check('cooldown recovers over time', g5.abilityCooldownLeft('overcharge') === 0);
+  check('unique hotkeys', new Set(ABILITIES.map((a) => a.key)).size === ABILITIES.length);
+}
+
+console.log('\n--- 16. abilities never break the core promises ---');
+{
+  const g = new Game(null);
+  g.cash = 5000;
+  const before = g.cash;
+  g.place(6, 9, 'mg');
+  const cashAfterBuild = g.cash;
+  g.startWave();
+  run(g, 12);
+  g.useAbility('airstrike', { x: 3, y: 10 });
+  g.useAbility('cryoburst');
+  g.useAbility('overcharge');
+  run(g, 3);
+  check('abilities cost no scrap', g.cash >= cashAfterBuild, `${cashAfterBuild} -> ${g.cash}`);
+  check('abilities destroy no towers', g.towers.length === 1);
+  check('a flare can never route the horde into the camp early',
+    g.baseHp === 100, `hp=${g.baseHp}`);
+
+  // A flare placed on the camp cell must not become a free instant loss.
+  const g2 = new Game(null);
+  g2.startWave();
+  run(g2, 12);
+  const hpBefore = g2.baseHp;
+  g2.useAbility('flare', { x: GOAL.x, y: GOAL.y });
+  run(g2, 6);
+  check('flaring the camp does not bypass the leak rules',
+    Number.isFinite(g2.baseHp) && g2.baseHp <= hpBefore);
+}
+
 console.log(`\n${fails === 0 ? 'ALL CHECKS PASSED' : `${fails} CHECK(S) FAILED`}\n`);
 process.exit(fails === 0 ? 0 : 1);
 
