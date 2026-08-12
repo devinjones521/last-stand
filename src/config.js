@@ -8,27 +8,13 @@ export const GRID = { cols: 32, rows: 20, cell: 32 };
 export const CANVAS_W = GRID.cols * GRID.cell; // 1024
 export const CANVAS_H = GRID.rows * GRID.cell; // 640
 
-// THE one and only spawn point, and the camp you're defending.
-// These never change, at any wave, ever. That is the whole design promise.
-export const SPAWN = { x: 0, y: 10 };
-export const GOAL = { x: GRID.cols - 1, y: 10 };
-
-// Permanent terrain. Unbuildable, unwalkable - gives the field character and
-// seeds interesting maze shapes without over-constraining the player.
-export const OBSTACLES = [
-  { x: 6, y: 2, w: 3, h: 2, kind: 'rubble' },
-  { x: 5, y: 14, w: 2, h: 1, kind: 'wreck' },
-  { x: 11, y: 5, w: 1, h: 3, kind: 'rubble' },
-  { x: 12, y: 16, w: 3, h: 1, kind: 'rubble' },
-  { x: 16, y: 2, w: 2, h: 2, kind: 'wreck' },
-  { x: 18, y: 12, w: 1, h: 4, kind: 'rubble' },
-  { x: 22, y: 6, w: 3, h: 1, kind: 'wreck' },
-  { x: 24, y: 15, w: 2, h: 2, kind: 'rubble' },
-  { x: 27, y: 3, w: 1, h: 3, kind: 'rubble' },
-  { x: 9, y: 9, w: 1, h: 1, kind: 'barrel' },
-  { x: 21, y: 11, w: 1, h: 1, kind: 'barrel' },
-  { x: 14, y: 9, w: 1, h: 1, kind: 'barrel' },
-];
+// The spawn, the camp and the permanent terrain now live per-map in maps.js.
+// There is still exactly ONE breach on every map, at any wave, ever - that is
+// the whole design promise; only where it sits changes between maps.
+//
+// They are deliberately NOT re-exported from here. Everything reads them off
+// `game.map`, so a stale module-level constant can't quietly point the wrong
+// map's camp at the right map's board.
 
 export const BALANCE = {
   startCash: 300,

@@ -6,7 +6,7 @@
 // local development never fights a stale cache.
 // ---------------------------------------------------------------------------
 
-const CACHE = 'laststand-v3';
+const CACHE = 'laststand-v4';
 
 const ASSETS = [
   './',
@@ -26,6 +26,7 @@ const ASSETS = [
   './src/research.js',
   './src/viewport.js',
   './src/tutorial.js',
+  './src/maps.js',
   './fonts/bigshoulders-800.woff2',
   './fonts/barlow-400.woff2',
   './fonts/barlow-600.woff2',

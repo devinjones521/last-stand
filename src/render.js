@@ -2,7 +2,7 @@
 // All canvas drawing. Reads game state, never mutates it.
 // ---------------------------------------------------------------------------
 
-import { GRID, CANVAS_W, CANVAS_H, SPAWN, GOAL, OBSTACLES, COLORS } from './config.js';
+import { GRID, CANVAS_W, CANVAS_H, COLORS } from './config.js';
 import { TOWER_DEFS } from './towers.js';
 import { idx } from './pathfinding.js';
 
@@ -63,6 +63,8 @@ export class Renderer {
     this.game = game;
     this.ctx = canvas.getContext('2d');
     this.terrain = this.bakeTerrain();
+    // Which map's rubble is currently baked into that layer.
+    this.bakedMap = game.map.id;
     this.time = 0;
 
     // Permanent ground marks — blood, scorch, the worn track the horde beats
@@ -153,7 +155,7 @@ export class Renderer {
     for (let y = 0; y <= GRID.rows; y++) { g.moveTo(0, y * CELL + 0.5); g.lineTo(CANVAS_W, y * CELL + 0.5); }
     g.stroke();
 
-    for (const o of OBSTACLES) this.drawObstacle(g, o);
+    for (const o of this.game.map.obstacles) this.drawObstacle(g, o);
     return c;
   }
 
@@ -221,6 +223,12 @@ export class Renderer {
     // *view*, and shake is divided back down by zoom so a kick is the same
     // number of screen pixels however far in you are. At 1x the view centre is
     // the board centre and the divisor is 1, so this is the original behaviour.
+    // A new map means new rubble baked into the ground layer.
+    if (game.map.id !== this.bakedMap) {
+      this.bakedMap = game.map.id;
+      this.terrain = this.bakeTerrain();
+    }
+
     const zoom = view.viewport?.scale ?? 1;
     const cx = view.viewport ? view.viewport.x + view.viewport.viewW / 2 : CANVAS_W / 2;
     const cy = view.viewport ? view.viewport.y + view.viewport.viewH / 2 : CANVAS_H / 2;
@@ -342,9 +350,9 @@ export class Renderer {
     const out = [];
 
     // The camp burns floodlights; the breach glows with whatever is coming.
-    out.push({ x: (GOAL.x + 0.5) * CELL, y: (GOAL.y + 0.5) * CELL, r: 175, a: 1 });
+    out.push({ x: (this.game.goal.x + 0.5) * CELL, y: (this.game.goal.y + 0.5) * CELL, r: 175, a: 1 });
     out.push({
-      x: (SPAWN.x + 0.5) * CELL, y: (SPAWN.y + 0.5) * CELL,
+      x: (this.game.spawn.x + 0.5) * CELL, y: (this.game.spawn.y + 0.5) * CELL,
       r: 120 + Math.sin(this.time * 2.2) * 8, a: 0.9,
     });
 
@@ -442,8 +450,8 @@ export class Renderer {
 
     // The camp's own lamps, always burning.
     const warm = this.sprite('#c7ab6d');
-    const bx = (GOAL.x + 0.5) * CELL;
-    const by = (GOAL.y + 0.5) * CELL;
+    const bx = (this.game.goal.x + 0.5) * CELL;
+    const by = (this.game.goal.y + 0.5) * CELL;
     ctx.globalAlpha = 0.16;
     ctx.drawImage(warm, bx - 90, by - 90, 180, 180);
 
@@ -477,8 +485,8 @@ export class Renderer {
 
   drawSpawn() {
     const { ctx } = this;
-    const x = (SPAWN.x + 0.5) * CELL;
-    const y = (SPAWN.y + 0.5) * CELL;
+    const x = (this.game.spawn.x + 0.5) * CELL;
+    const y = (this.game.spawn.y + 0.5) * CELL;
     const pulse = 0.5 + 0.5 * Math.sin(this.time * 2.2);
 
     const grad = ctx.createRadialGradient(x, y, 2, x, y, CELL * 1.8);
@@ -501,16 +509,32 @@ export class Renderer {
     ctx.arc(x, y, 14 + pulse * 4, 0, TAU);
     ctx.stroke();
 
+    this.edgeLabel('BREACH', x, y, 1);
+  }
+
+  /**
+   * A label under (dir 1) or over (dir -1) a point, nudged back onto the board.
+   * The breach and the camp sit on an edge, and which edge depends on the map,
+   * so neither can assume it has room on the side it would rather use.
+   */
+  edgeLabel(text, x, y, dir) {
+    const { ctx } = this;
     ctx.fillStyle = COLORS.textDim;
     ctx.font = '800 10px "Big Shoulders", sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('BREACH', x, y + CELL * 0.95);
+
+    const half = ctx.measureText(text).width / 2 + 2;
+    const lx = Math.min(CANVAS_W - half, Math.max(half, x));
+    // Flip to the other side rather than draw off the top or bottom edge.
+    const away = y + dir * CELL * 0.95;
+    const ly = away < 10 || away > CANVAS_H - 4 ? y - dir * CELL * 0.9 : away;
+    ctx.fillText(text, lx, ly);
   }
 
   drawBase() {
     const { ctx, game } = this;
-    const x = (GOAL.x + 0.5) * CELL;
-    const y = (GOAL.y + 0.5) * CELL;
+    const x = (this.game.goal.x + 0.5) * CELL;
+    const y = (this.game.goal.y + 0.5) * CELL;
     const hpFrac = Math.max(0, game.baseHp / game.maxBaseHp);
 
     ctx.fillStyle = 'rgba(0,0,0,0.4)';
@@ -540,10 +564,7 @@ export class Renderer {
     ctx.fillStyle = hpFrac > 0.5 ? COLORS.ok : hpFrac > 0.25 ? COLORS.amber : COLORS.danger;
     ctx.fillRect(x - bw / 2 + 1, y + CELL * 0.8 + 1, (bw - 2) * hpFrac, 4);
 
-    ctx.fillStyle = COLORS.textDim;
-    ctx.font = '800 10px "Big Shoulders", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('CAMP', x, y - CELL * 0.85);
+    this.edgeLabel('CAMP', x, y, -1);
   }
 
   drawPuddles() {

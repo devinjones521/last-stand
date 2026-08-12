@@ -2,7 +2,10 @@
 // Resolve sibling modules relative to this file, so the repo can live anywhere.
 const B = new URL('../src/', import.meta.url).href;
 const { Game } = await import(B + 'game.js');
-const { SPAWN, GOAL, GRID } = await import(B + 'config.js');
+const { GRID } = await import(B + 'config.js');
+const { MAPS, MAP_ORDER, mapFor } = await import(B + 'maps.js');
+// The original board, which the pre-existing checks were all written against.
+const { spawn: SPAWN, goal: GOAL } = MAPS.yard;
 const { idx } = await import(B + 'pathfinding.js');
 const { buildWave } = await import(B + 'waves.js');
 const { towerStats, TOWER_DEFS } = await import(B + 'towers.js');
@@ -592,6 +595,143 @@ console.log('\n--- 19. research actually reaches the simulation ---');
   console.log(`  info  same build — no research: wave ${plainRun}, maxed research: wave ${buffedRun}`);
   check('research measurably helps you survive longer', buffedRun > plainRun,
     `${plainRun} -> ${buffedRun}`);
+}
+
+console.log('\n--- 19b. every map is a real, playable board ---');
+{
+  check('the default board is still The Yard', new Game(null).map.id === 'yard');
+  check('an unknown map id falls back rather than throwing', mapFor('nope').id === 'yard');
+  check('MAP_ORDER covers every defined map',
+    MAP_ORDER.length === Object.keys(MAPS).length
+    && MAP_ORDER.every((id) => MAPS[id]), MAP_ORDER.join(','));
+
+  for (const id of MAP_ORDER) {
+    const m = MAPS[id];
+    const g = new Game(null, 'standard', id);
+    const pad = id.padEnd(11);
+
+    // The whole design promise: exactly one way in, on every board.
+    check(`${pad} has exactly one breach and one camp`,
+      !!g.spawn && !!g.goal && g.map.id === id);
+    check(`${pad} keeps breach and camp apart`,
+      Math.abs(g.spawn.x - g.goal.x) + Math.abs(g.spawn.y - g.goal.y) >= 15,
+      `manhattan=${Math.abs(g.spawn.x - g.goal.x) + Math.abs(g.spawn.y - g.goal.y)}`);
+    for (const [what, p] of [['breach', g.spawn], ['camp', g.goal]]) {
+      check(`${pad} ${what} is on the board`,
+        p.x >= 0 && p.y >= 0 && p.x < GRID.cols && p.y < GRID.rows, `${p.x},${p.y}`);
+      check(`${pad} ${what} cell is never blocked`, !g.blocked[idx(p.x, p.y)]);
+    }
+
+    // A map with no route is unshippable, so this is the important one.
+    const end = g.route[g.route.length - 1];
+    check(`${pad} has a route from breach to camp`,
+      g.route.length > 1 && g.route[0].x === g.spawn.x && g.route[0].y === g.spawn.y
+      && end.x === g.goal.x && end.y === g.goal.y,
+      `len=${g.route.length}`);
+
+    // Obstacles must sit on the board and leave room to actually build.
+    const inside = m.obstacles.every((o) =>
+      o.x >= 0 && o.y >= 0 && o.x + o.w <= GRID.cols && o.y + o.h <= GRID.rows);
+    check(`${pad} all terrain is inside the board`, inside);
+    const blockedCells = m.obstacles.reduce((n, o) => n + o.w * o.h, 0);
+    const free = GRID.cols * GRID.rows - blockedCells;
+    check(`${pad} leaves most of the field buildable`, free > GRID.cols * GRID.rows * 0.8,
+      `${free}/${GRID.cols * GRID.rows} free`);
+
+    // Terrain must never bury the breach or the camp under rubble.
+    const buried = m.obstacles.some((o) =>
+      [g.spawn, g.goal].some((p) =>
+        p.x >= o.x && p.x < o.x + o.w && p.y >= o.y && p.y < o.y + o.h));
+    check(`${pad} nothing is built on top of the breach or camp`, !buried);
+
+    check(`${pad} has a name and a blurb`, !!m.name && !!m.blurb);
+  }
+
+  // The seal rule has to hold everywhere, not just on the board it was written for.
+  for (const id of MAP_ORDER) {
+    const g = new Game(null, 'standard', id);
+    g.cash = 999999;
+    // Wall off a full column and a full row; at least one cell must be refused.
+    let refusals = 0;
+    for (let y = 0; y < GRID.rows; y++) if (!g.place(16, y, 'barricade').ok) refusals++;
+    for (let x = 0; x < GRID.cols; x++) if (!g.place(x, 10, 'barricade').ok) refusals++;
+    check(`${id.padEnd(11)} cannot be sealed shut`,
+      refusals >= 1 && g.route.length > 1, `refusals=${refusals} route=${g.route.length}`);
+  }
+
+  // Switching map is just another reset: no stale terrain from the old board.
+  {
+    const g = new Game(null, 'standard', 'reservoir');
+    const tankCell = idx(15, 8);           // inside The Reservoir's dry tank
+    check('reservoir has terrain where its tank is', !!g.terrain[tankCell]);
+    g.reset('standard', 'yard');
+    check('switching map clears the old terrain', !g.terrain[tankCell]);
+    check('and lays the new map down', g.map.id === 'yard' && g.route.length > 1);
+    g.reset('standard', 'reservoir');
+    check('and switching back restores it', !!g.terrain[idx(15, 8)]);
+  }
+
+  // A run on every map, to prove they are actually survivable boards.
+  for (const id of MAP_ORDER) {
+    const g = new Game(null, 'standard', id);
+    g.cash = 3000;
+    // Ring the camp with guns rather than hand-authoring a maze per map.
+    let built = 0;
+    for (let r = 2; r <= 4 && built < 8; r++) {
+      for (let dx = -r; dx <= r && built < 8; dx++) {
+        for (const dy of [-r, r]) {
+          const x = g.goal.x + dx, y = g.goal.y + dy;
+          if (built < 8 && g.inBounds(x, y) && g.place(x, y, 'mg').ok) built++;
+        }
+      }
+    }
+    g.startWave();
+    let guard = 0;
+    while (g.phase === 'wave' && guard < 200 / STEP) { g.update(STEP); guard++; }
+    check(`${id.padEnd(11)} wave 1 resolves with ${built} guns up`,
+      g.phase === 'building' && g.stats.kills > 0,
+      `phase=${g.phase} kills=${g.stats.kills} leaked=${g.stats.leaked}`);
+  }
+}
+
+  // The natural (unmazed) walk differs a lot between boards, which is the point
+  // - but an identical camp-adjacent build has to survive comparably on all of
+  // them, or the map picker is really a second difficulty picker.
+  {
+    const lengths = MAP_ORDER.map((id) => `${id} ${new Game(null, 'standard', id).route.length}`);
+    console.log(`  info  natural route length — ${lengths.join(', ')}`);
+    const nums = MAP_ORDER.map((id) => new Game(null, 'standard', id).route.length);
+    check('no map is a straight line to the camp', Math.min(...nums) > GRID.cols - 4);
+    check('the boards genuinely differ in shape', Math.max(...nums) - Math.min(...nums) >= 8,
+      nums.join(','));
+  }
+
+console.log('\n--- 19c. records are per map AND difficulty ---');
+{
+  // recordRun writes through localStorage, which doesn't exist here - so this
+  // checks the key shape, which is what actually had to change.
+  check('key pairs a map with a difficulty',
+    Game.recordKey('overpass', 'brutal') === 'overpass:brutal');
+  check('two maps on one difficulty are different records',
+    Game.recordKey('yard', 'standard') !== Game.recordKey('overpass', 'standard'));
+
+  // Saves carry their map, and pre-map saves belong to the original board.
+  const g = new Game(null, 'brutal', 'coldstorage');
+  g.cash = 9999;
+  g.place(20, 10, 'mg');
+  const blob = JSON.parse(JSON.stringify(g.serialize()));
+  check('a save records its map', blob.map === 'coldstorage' && blob.v === 3);
+
+  const g2 = new Game(null);
+  check('a v3 save loads onto the right map', g2.load(blob) && g2.map.id === 'coldstorage');
+  check('and the difficulty came with it', g2.balance.difficulty === 'brutal');
+  check('and the towers landed', g2.towers.length === 1 && !!g2.towerAt[idx(20, 10)]);
+
+  const legacy = { ...blob, v: 2 };
+  delete legacy.map;
+  const g3 = new Game(null, 'standard', 'overpass');
+  check('a pre-map save still loads', g3.load(legacy));
+  check('and lands on the original board', g3.map.id === 'yard');
 }
 
 console.log('\n--- 20. the offline bundle is complete ---');

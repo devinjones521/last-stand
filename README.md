@@ -8,12 +8,13 @@ A maze-building zombie tower defense. Endless waves, deep upgrade trees, and
 ![Last Stand — wave 36](docs/hero.png)
 
 Vanilla JavaScript. **No dependencies, no build step, no framework** — ES modules,
-Canvas 2D, WebAudio, ~4,000 lines. Runs offline as an installable PWA; on Android
+Canvas 2D, WebAudio, ~6,000 lines. Runs offline as an installable PWA; on Android
 or iOS, open the link and choose **Add to Home Screen**.
 
 <table>
 <tr>
-<td width="50%"><img src="docs/title.png" alt="Title screen and difficulty select"></td>
+<td width="50%"><img src="docs/title.jpg" alt="Title screen: difficulty and map select"><br>
+<sub><em>Four maps, one breach on each. Best runs are per map and difficulty.</em></sub></td>
 <td width="50%"><img src="docs/maze.jpg" alt="459 towers filling the map"><br>
 <sub><em>Stress test: every buildable cell filled. 459 towers, 5.3ms/frame.</em></sub></td>
 </tr>
@@ -27,7 +28,7 @@ or iOS, open the link and choose **Add to Home Screen**.
 - **The maze is emergent, not authored.** Towers *are* the walls; the game refuses
   any placement that would seal the route, so you can't softlock yourself.
 - **A headless test suite** that runs the real simulation in Node with no DOM —
-  80+ checks including a measured difficulty curve. [↓](#testing)
+  240+ checks including a measured difficulty curve. [↓](#testing)
 - **Layered Canvas renderer** with baked terrain, an accumulating decal layer, and
   a night lighting pass. [↓](#how-the-battlefield-is-drawn)
 - **A pinch-zoom camera that costs nothing when unused** — one transform, clamped
@@ -36,6 +37,7 @@ or iOS, open the link and choose **Add to Home Screen**.
   game state, so it can't be got stuck and replays from wherever you are.
   [↓](#teaching-it)
 - **Deterministic waves** — wave 37 is identical every run, so it can be learned.
+- **Four maps that move the breach without ever adding one.** [↓](#maps)
 
 ## Run it locally
 
@@ -57,10 +59,10 @@ shadowed by a stale cache.
 This game was built around one specific complaint: tower defense games get
 frustrating when they start opening extra spawn points as the difficulty ramps.
 
-So it never does. There is **one breach**, on the west fence. Wave 1 comes
-through it. So does wave 100. Difficulty scales through what walks through the
-gap — tougher bodies, nastier archetypes, tighter spacing — and never through
-where it comes from.
+So it never does. Every map has **exactly one breach**. Wave 1 comes through it.
+So does wave 100. Difficulty scales through what walks through the gap — tougher
+bodies, nastier archetypes, tighter spacing — and never through where it comes
+from. Picking a different map moves the breach; it never adds a second one.
 
 Three more rules follow from the same idea:
 
@@ -122,6 +124,33 @@ research gets exactly the balance the game shipped with — nothing was nerfed t
 justify a tree, and nothing is ever lost. Measured by the test suite: an
 identical build reaches **wave 29 with no research and wave 44 fully maxed**, and
 a wave-40 run banks ~150 intel against a first node level costing 30–55.
+
+### Maps
+
+Four boards, picked on the title screen alongside difficulty. Each one has one
+breach and one camp; what changes is **where the breach sits** and what permanent
+terrain stands between it and you.
+
+| Map | Breach → camp | Natural walk\* | The problem it poses |
+|---|---|---|---|
+| **The Yard** | west → east | 32 | Open ground. Nothing to hide behind and nothing in your way. |
+| **Cold Storage** | north → south-east | 32 | Freezer rows already channel the walk — build with them, not against them. |
+| **The Overpass** | corner → corner | 49 | The longest natural walk. A collapsed span cuts the field on the diagonal. |
+| **The Reservoir** | east → west | 43 | Runs against the grain, around a dry tank you can't build on. |
+
+\* route length in cells with nothing built, measured by the test suite.
+
+The interesting part is what *didn't* change. An identical camp-adjacent gun
+line reaches **wave 29 on all four**, so the map picker is a different maze
+problem, not a second difficulty slider. Best runs are recorded per **map and
+difficulty together** — wave 40 on The Overpass isn't the same achievement as
+wave 40 on The Yard.
+
+Map data is one object per board (`src/maps.js`), and the title screen's
+thumbnails are SVG generated from that same data, so a preview can't drift out
+of sync with the board it's advertising. The suite checks every map for a
+reachable route, terrain inside the board, a breach and camp that aren't buried
+under rubble, and that the seal rule still can't be beaten.
 
 ### Difficulty
 
@@ -220,7 +249,8 @@ tools/
   generate-icons.mjs  draws the icons (hand-rolled PNG encoder, no deps)
   sim-test.mjs        headless simulation suite — npm test
 src/
-  config.js         ALL balance numbers, difficulties, colours, map layout
+  config.js         ALL balance numbers, difficulties, colours
+  maps.js           the four boards: breach, camp and permanent terrain
   towers.js         tower defs + upgrade/branch trees
   enemies.js        enemy defs + per-wave scaling
   waves.js          deterministic wave generation

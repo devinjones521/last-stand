@@ -30,8 +30,9 @@ const view = {
   viewport: new Viewport(),
 };
 
-/** Difficulty picked on the title screen; applied when a new run starts. */
+/** Difficulty and map picked on the title screen; applied when a run starts. */
 let chosenDifficulty = 'standard';
+let chosenMap = 'yard';
 /** Whether the research screen was opened from game-over (changes its exit). */
 let researchFromGameOver = false;
 
@@ -513,13 +514,17 @@ function closeOverlay() {
 }
 
 document.getElementById('overlay-card').addEventListener('click', (ev) => {
-  // Difficulty chips only change the pending selection; they start nothing.
+  // Difficulty and map chips only change the pending selection; they start
+  // nothing. Re-rendering the title swaps the best-run figures on both rows,
+  // since a record belongs to a map and a difficulty together.
   const diff = ev.target.closest('[data-diff]');
-  if (diff) {
-    chosenDifficulty = diff.dataset.diff;
+  const map = ev.target.closest('[data-map]');
+  if (diff || map) {
+    if (map) chosenMap = map.dataset.map;
+    else chosenDifficulty = diff.dataset.diff;
     audio.init();
     audio.play('ui');
-    ui.showTitle(!!Game.readSave(), Game.readRecords(), chosenDifficulty);
+    ui.showTitle(!!Game.readSave(), Game.readRecords(), chosenDifficulty, chosenMap);
     return;
   }
 
@@ -547,13 +552,13 @@ document.getElementById('overlay-card').addEventListener('click', (ev) => {
   switch (btn.dataset.act) {
     case 'new': {
       Game.clearSave();
-      game.reset(chosenDifficulty);
+      game.reset(chosenDifficulty, chosenMap);
       view.buildId = null; view.selected = null; view.previewRoute = null;
       vp.reset(); syncZoomUi();
       document.getElementById('chk-auto').checked = false;
       closeOverlay();
       const name = DIFFICULTIES[chosenDifficulty].name;
-      ui.toast(`New run · ${name} — build your maze, then send wave 1`, 'good');
+      ui.toast(`${game.map.name} · ${name} — build your maze, then send wave 1`, 'good');
       // First run ever: coach it. After that the player has seen it and the
       // walkthrough stays available under Controls.
       if (!Tutorial.seen()) tutorial.start();
@@ -593,7 +598,7 @@ document.getElementById('overlay-card').addEventListener('click', (ev) => {
       ui.showResearch(true);
       break;
     case 'close-research':
-      ui.showTitle(!!Game.readSave(), Game.readRecords(), chosenDifficulty);
+      ui.showTitle(!!Game.readSave(), Game.readRecords(), chosenDifficulty, chosenMap);
       break;
     case 'restart':
       game.reset();
@@ -606,7 +611,7 @@ document.getElementById('overlay-card').addEventListener('click', (ev) => {
     case 'title':
       Game.clearSave();
       tutorial.stop(false);
-      ui.showTitle(false, Game.readRecords(), chosenDifficulty);
+      ui.showTitle(false, Game.readRecords(), chosenDifficulty, chosenMap);
       break;
     case 'close':
       closeOverlay();
@@ -682,7 +687,7 @@ document.getElementById('btn-sound').classList.add('is-on');
 syncZoomUi();
 ui.mount();
 game.paused = true;
-ui.showTitle(!!Game.readSave(), Game.readRecords(), chosenDifficulty);
+ui.showTitle(!!Game.readSave(), Game.readRecords(), chosenDifficulty, chosenMap);
 requestAnimationFrame(frame);
 
 // Offline support. Deliberately skipped on localhost so local edits are never

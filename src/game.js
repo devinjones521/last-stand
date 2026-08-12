@@ -3,8 +3,9 @@
 // ---------------------------------------------------------------------------
 
 import {
-  GRID, SPAWN, GOAL, OBSTACLES, CANVAS_W, CANVAS_H, balanceFor, ABILITIES,
+  GRID, CANVAS_W, CANVAS_H, balanceFor, ABILITIES,
 } from './config.js';
+import { mapFor } from './maps.js';
 import {
   CELL_COUNT, idx, computeField, nextStep, traceRoute,
 } from './pathfinding.js';
@@ -20,7 +21,7 @@ const RECORDS_KEY = 'laststand.records.v1';
 let nextUid = 1;
 
 export class Game {
-  constructor(audio, difficulty = 'standard') {
+  constructor(audio, difficulty = 'standard', mapId = 'yard') {
     this.audio = audio;
     this.balance = balanceFor(difficulty);
     this.terrain = new Uint8Array(CELL_COUNT); // permanent obstacles
@@ -31,7 +32,13 @@ export class Game {
     this.lureField = new Int32Array(CELL_COUNT);
     this.towerAt = new Array(CELL_COUNT).fill(null);
 
-    for (const o of OBSTACLES) {
+    this.reset(difficulty, mapId);
+  }
+
+  /** Stamp the current map's permanent terrain into the grid. */
+  layTerrain() {
+    this.terrain.fill(0);
+    for (const o of this.map.obstacles) {
       for (let y = o.y; y < o.y + o.h; y++) {
         for (let x = o.x; x < o.x + o.w; x++) {
           if (x >= 0 && y >= 0 && x < GRID.cols && y < GRID.rows) this.terrain[idx(x, y)] = 1;
@@ -39,14 +46,18 @@ export class Game {
       }
     }
     // The spawn and the camp can never be built on or blocked.
-    this.terrain[idx(SPAWN.x, SPAWN.y)] = 0;
-    this.terrain[idx(GOAL.x, GOAL.y)] = 0;
-
-    this.reset();
+    this.terrain[idx(this.spawn.x, this.spawn.y)] = 0;
+    this.terrain[idx(this.goal.x, this.goal.y)] = 0;
   }
 
-  reset(difficulty = this.balance?.difficulty ?? 'standard') {
+  get spawn() { return this.map.spawn; }
+  get goal() { return this.map.goal; }
+
+  reset(difficulty = this.balance?.difficulty ?? 'standard', mapId = this.map?.id ?? 'yard') {
     this.balance = balanceFor(difficulty);
+    // Terrain is re-laid every reset, so switching map is just another reset.
+    this.map = mapFor(mapId);
+    this.layTerrain();
     // Permanent research is re-read at the start of every run, so anything
     // bought on the game-over screen applies immediately to the next one.
     this.research = loadResearch();
@@ -102,8 +113,8 @@ export class Game {
   rebuild() {
     this.blocked.set(this.terrain);
     for (const t of this.towers) this.blocked[idx(t.x, t.y)] = 1;
-    computeField(this.blocked, GOAL.x, GOAL.y, this.field);
-    this.route = traceRoute(this.field, SPAWN.x, SPAWN.y);
+    computeField(this.blocked, this.goal.x, this.goal.y, this.field);
+    this.route = traceRoute(this.field, this.spawn.x, this.spawn.y);
     // A live flare's field has to follow the maze changing under it.
     if (this.lure) computeField(this.blocked, this.lure.x, this.lure.y, this.lureField);
 
@@ -173,8 +184,8 @@ export class Game {
     if (!this.inBounds(x, y)) return { ok: false, reason: 'Off the map' };
     const i = idx(x, y);
 
-    if (x === SPAWN.x && y === SPAWN.y) return { ok: false, reason: 'That is the breach' };
-    if (x === GOAL.x && y === GOAL.y) return { ok: false, reason: 'That is your camp' };
+    if (x === this.spawn.x && y === this.spawn.y) return { ok: false, reason: 'That is the breach' };
+    if (x === this.goal.x && y === this.goal.y) return { ok: false, reason: 'That is your camp' };
     if (this.terrain[i]) return { ok: false, reason: 'Blocked by rubble' };
     if (this.towerAt[i]) return { ok: false, reason: 'Already occupied' };
 
@@ -191,10 +202,10 @@ export class Game {
 
     // The seal test.
     this.blocked[i] = 1;
-    computeField(this.blocked, GOAL.x, GOAL.y, this.testField);
+    computeField(this.blocked, this.goal.x, this.goal.y, this.testField);
     this.blocked[i] = 0;
 
-    if (this.testField[idx(SPAWN.x, SPAWN.y)] === -1) {
+    if (this.testField[idx(this.spawn.x, this.spawn.y)] === -1) {
       return { ok: false, reason: 'That would seal the route completely' };
     }
     for (const e of this.enemies) {
@@ -214,9 +225,9 @@ export class Game {
     const i = idx(x, y);
     if (this.blocked[i]) return null;
     this.blocked[i] = 1;
-    computeField(this.blocked, GOAL.x, GOAL.y, this.testField);
+    computeField(this.blocked, this.goal.x, this.goal.y, this.testField);
     this.blocked[i] = 0;
-    const route = traceRoute(this.testField, SPAWN.x, SPAWN.y);
+    const route = traceRoute(this.testField, this.spawn.x, this.spawn.y);
     return route.length > 1 ? route : null;
   }
 
@@ -342,7 +353,7 @@ export class Game {
       const bonus = Math.round(waveClearBonus(this.wave, this.balance) * this.balance.earlyCallBonus);
       this.cash += bonus;
       this.stats.earned += bonus;
-      this.pushFloater(SPAWN.x * CELL + CELL, SPAWN.y * CELL, `+$${bonus} early`, '#ffb020');
+      this.pushFloater(this.spawn.x * CELL + CELL, this.spawn.y * CELL, `+$${bonus} early`, '#ffb020');
     }
     this.audio?.play('wavestart');
     return { ok: true, script };
@@ -360,11 +371,11 @@ export class Game {
     const e = {
       uid: nextUid++,
       def, typeId, waveNum,
-      x: (SPAWN.x + 0.5) * CELL,
-      y: (SPAWN.y + 0.5) * CELL,
+      x: (this.spawn.x + 0.5) * CELL,
+      y: (this.spawn.y + 0.5) * CELL,
       vx: 0, vy: 0,
-      cx: SPAWN.x, cy: SPAWN.y,
-      tx: SPAWN.x, ty: SPAWN.y,
+      cx: this.spawn.x, cy: this.spawn.y,
+      tx: this.spawn.x, ty: this.spawn.y,
       dx: 1, dy: 0,
       ox: (Math.random() - 0.5) * 12,
       oy: (Math.random() - 0.5) * 12,
@@ -633,7 +644,7 @@ export class Game {
     this.stats.leaked += 1;
     this.baseHp -= e.leak;
     this.shake = Math.max(this.shake, Math.min(18, 3 + e.leak));
-    this.pushFloater(GOAL.x * CELL, GOAL.y * CELL - 8, `-${e.leak}`, '#e04b3a');
+    this.pushFloater(this.goal.x * CELL, this.goal.y * CELL - 8, `-${e.leak}`, '#e04b3a');
     this.audio?.play('leak');
     if (this.baseHp <= 0) {
       this.baseHp = 0;
@@ -825,7 +836,7 @@ export class Game {
         remaining -= dist;
         e.cx = e.tx; e.cy = e.ty;
 
-        if (e.cx === GOAL.x && e.cy === GOAL.y) { this.leak(e); return; }
+        if (e.cx === this.goal.x && e.cy === this.goal.y) { this.leak(e); return; }
         const step = nextStep(this.fieldFor(e), e.cx, e.cy, e.dx, e.dy);
         if (!step) break; // stranded (shouldn't happen) - just idle
         e.tx = step.x; e.ty = step.y; e.dx = step.dx; e.dy = step.dy;
@@ -1312,7 +1323,7 @@ export class Game {
       this.stats.earned += bonus + interest;
       this.lastPayout = { wave: w.num, bonus, interest };
       this.pushFloater(
-        GOAL.x * CELL - 30, GOAL.y * CELL - 20,
+        this.goal.x * CELL - 30, this.goal.y * CELL - 20,
         `+$${bonus + interest}`, '#6fcf5f',
       );
       this.runningWaves.splice(i, 1);
@@ -1329,8 +1340,9 @@ export class Game {
 
   serialize() {
     return {
-      v: 2,
+      v: 3,
       difficulty: this.balance.difficulty,
+      map: this.map.id,
       cash: this.cash,
       baseHp: this.baseHp,
       wave: this.wave,
@@ -1345,8 +1357,9 @@ export class Game {
   }
 
   load(data) {
-    if (!data || (data.v !== 1 && data.v !== 2)) return false;
-    this.reset(data.difficulty ?? 'standard');
+    if (!data || ![1, 2, 3].includes(data.v)) return false;
+    // Saves from before maps existed were all played on the original board.
+    this.reset(data.difficulty ?? 'standard', data.map ?? 'yard');
     this.cash = data.cash;
     this.baseHp = data.baseHp;
     this.wave = data.wave;
@@ -1391,12 +1404,26 @@ export class Game {
     try { localStorage.removeItem(SAVE_KEY); } catch { /* ignore */ }
   }
 
-  /** Best result per difficulty, kept across runs. */
+  /**
+   * Best result per map AND difficulty, kept across runs. Keyed "map:diff",
+   * because wave 40 on The Overpass is not the same achievement as wave 40 on
+   * The Yard.
+   *
+   * Records written before maps existed are keyed by difficulty alone. They
+   * were all played on the original board, so they migrate onto it.
+   */
   static readRecords() {
     try {
-      return JSON.parse(localStorage.getItem(RECORDS_KEY) ?? '{}') ?? {};
+      const raw = JSON.parse(localStorage.getItem(RECORDS_KEY) ?? '{}') ?? {};
+      const out = {};
+      for (const [key, rec] of Object.entries(raw)) {
+        out[key.includes(':') ? key : Game.recordKey('yard', key)] = rec;
+      }
+      return out;
     } catch { return {}; }
   }
+
+  static recordKey(mapId, difficulty) { return `${mapId}:${difficulty}`; }
 
   /**
    * Pay out intel for a finished run and bank it. Always awards something —
@@ -1418,7 +1445,7 @@ export class Game {
   /** Bank the finished run. Returns true if it beat the previous best. */
   recordRun() {
     const records = Game.readRecords();
-    const key = this.balance.difficulty;
+    const key = Game.recordKey(this.map.id, this.balance.difficulty);
     const prev = records[key];
     const cleared = Math.max(0, this.wave - 1);
     const isBest = !prev || cleared > prev.wave;

@@ -3,7 +3,8 @@
 // Reads game state; mutates it only through Game's public methods.
 // ---------------------------------------------------------------------------
 
-import { TARGET_MODES, DIFFICULTIES, DIFFICULTY_ORDER, ABILITIES } from './config.js';
+import { TARGET_MODES, DIFFICULTIES, DIFFICULTY_ORDER, ABILITIES, GRID } from './config.js';
+import { MAPS, MAP_ORDER } from './maps.js';
 import { RESEARCH, nodeCost } from './research.js';
 import { TOWER_DEFS, TOWER_ORDER, towerStats, towerTitle, nextUpgradeCost } from './towers.js';
 import { ENEMY_DEFS } from './enemies.js';
@@ -66,6 +67,23 @@ function statRows(s, defId) {
   if (s.maxHpBurn) rows.push(['vs max HP', `+${(s.maxHpBurn * 100).toFixed(2)}%/s`]);
   if (def.cone) rows.push(['Arc', `${Math.round(def.cone * 2 * 57.3)}°`]);
   return rows;
+}
+
+/**
+ * A map's shape as an inline SVG, drawn straight from the same obstacle data
+ * the game uses - so a thumbnail can never drift out of sync with the board it
+ * is advertising. Red dot is the one breach; the bone square is your camp.
+ */
+function minimap(map) {
+  const rects = map.obstacles.map((o) =>
+    `<rect x="${o.x}" y="${o.y}" width="${o.w}" height="${o.h}" fill="#4a4c3e"/>`).join('');
+  return `<svg class="map-thumb" viewBox="0 0 ${GRID.cols} ${GRID.rows}"
+      preserveAspectRatio="none" aria-hidden="true">
+    <rect width="${GRID.cols}" height="${GRID.rows}" fill="#171a12"/>
+    ${rects}
+    <circle cx="${map.spawn.x + 0.5}" cy="${map.spawn.y + 0.5}" r="1.6" fill="#c1442e"/>
+    <rect x="${map.goal.x - 0.5}" y="${map.goal.y - 0.5}" width="2" height="2" fill="#c7ab6d"/>
+  </svg>`;
 }
 
 export class UI {
@@ -524,10 +542,10 @@ export class UI {
     $('#overlay').classList.add('hidden');
   }
 
-  showTitle(hasSave, records = {}, chosen = 'standard') {
+  showTitle(hasSave, records = {}, chosen = 'standard', chosenMap = 'yard') {
     const diffs = DIFFICULTY_ORDER.map((id) => {
       const d = DIFFICULTIES[id];
-      const rec = records[id];
+      const rec = records[`${chosenMap}:${id}`];
       return `<button class="diff${id === chosen ? ' is-on' : ''}" data-diff="${id}">
         <div class="diff-name">${d.name}</div>
         <div class="diff-blurb">${d.blurb}</div>
@@ -535,13 +553,27 @@ export class UI {
       </button>`;
     }).join('');
 
+    const maps = MAP_ORDER.map((id) => {
+      const m = MAPS[id];
+      const rec = records[`${id}:${chosen}`];
+      return `<button class="diff map${id === chosenMap ? ' is-on' : ''}" data-map="${id}">
+        ${minimap(m)}
+        <div class="diff-name">${m.name}</div>
+        <div class="diff-blurb">${m.blurb}</div>
+        <div class="diff-rec">${rec ? `Best: wave ${rec.wave}` : '—'}</div>
+      </button>`;
+    }).join('');
+
     this.showOverlay(`
       <h1>LAST STAND</h1>
       <div class="sub">Maze-building zombie defense · endless</div>
+      <div class="pick-label">Difficulty</div>
       <div class="diff-row">${diffs}</div>
+      <div class="pick-label">Map — one breach on every one of them</div>
+      <div class="diff-row map-row">${maps}</div>
       <div class="promise">
-        <b>The promise:</b> there is exactly <b>one breach</b>, on the west fence.
-        Wave 1 comes through it. So does wave 100. The dead never get a second door —
+        <b>The promise:</b> every map has exactly <b>one breach</b>. Wave 1 comes
+        through it. So does wave 100. The dead never get a second door —
         difficulty comes from what walks through, never from where.
       </div>
       <p>You are not given a road. <b>Your towers are the walls.</b> Everything you build
@@ -655,16 +687,19 @@ export class UI {
       ? [...this.game.towers].sort((a, b) => b.damageDealt - a.damageDealt)[0]
       : null;
     const diff = DIFFICULTIES[this.game.balance.difficulty]?.name ?? 'Standard';
+    // Records belong to a map and a difficulty together, so both have to be
+    // named or "your best is still wave 30" is comparing different boards.
+    const where = `${this.game.map.name} · ${diff}`;
 
     this.showOverlay(`
       <h1 style="color:var(--danger)">OVERRUN</h1>
-      <div class="sub">The camp fell on wave ${this.game.wave} · ${diff}</div>
+      <div class="sub">The camp fell on wave ${this.game.wave} · ${where}</div>
       ${record?.isBest
         ? `<div class="promise" style="border-left-color:var(--amber);color:#ffd98a">
-             <b>New record.</b> ${record.cleared} waves cleared on ${diff}${record.previous ? ` — beat your old best of ${record.previous}` : ''}.
+             <b>New record.</b> ${record.cleared} waves cleared on ${where}${record.previous ? ` — beat your old best of ${record.previous}` : ''}.
            </div>`
         : record?.previous
-          ? `<div class="hint" style="margin-bottom:12px">Your best on ${diff} is still wave ${record.previous}.</div>`
+          ? `<div class="hint" style="margin-bottom:12px">Your best on ${where} is still wave ${record.previous}.</div>`
           : ''}
       ${best ? `<div class="hint" style="margin-bottom:12px">Top earner: <b style="color:var(--toxic)">${towerTitle(best.defId, best.level, best.branch)}</b>
         — ${fmt(best.damageDealt)} damage, ${best.kills} kills.</div>` : ''}
