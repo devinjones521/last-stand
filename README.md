@@ -32,6 +32,9 @@ or iOS, open the link and choose **Add to Home Screen**.
   a night lighting pass. [↓](#how-the-battlefield-is-drawn)
 - **A pinch-zoom camera that costs nothing when unused** — one transform, clamped
   so 1× is provably the identity. [↓](#the-camera)
+- **A walkthrough with no scripted click path** — every step is a predicate over
+  game state, so it can't be got stuck and replays from wherever you are.
+  [↓](#teaching-it)
 - **Deterministic waves** — wave 37 is identical every run, so it can be learned.
 
 ## Run it locally
@@ -223,6 +226,7 @@ src/
   waves.js          deterministic wave generation
   pathfinding.js    flow-field BFS (see below)
   viewport.js       zoom/pan camera (see below)
+  tutorial.js       first-run coaching steps (see below)
   game.js           simulation: state and rules, no drawing
   render.js         all canvas drawing, no state mutation
   ui.js             DOM sidebar, panels, overlays
@@ -272,6 +276,32 @@ readable across the whole board, so legibility beats mood.
 Zombies share a single draw routine parameterised per archetype (`BODY` in
 `render.js` — torso width, head size, reach, stride speed, lean, plus flags like
 `legless`, `visor`, `maw`, `plates`). One renderer, ten distinct silhouettes.
+
+### Teaching it
+
+The one idea a new player has to get is that **the towers are the walls** — that
+you're drawing the route, not decorating one. The title screen says so and
+nobody reads it, so a first run is coached one line at a time instead.
+
+Every step is a **predicate over real game state**, never a scripted click path:
+
+```js
+{ id: 'wall',
+  title: 'Drag out a wall',
+  body: 'Hold and drag to lay a whole run at once…',
+  done: (g) => g.towers.filter((t) => t.stats.inert).length >= 6 }
+```
+
+That one decision buys most of the good behaviour. There is no wrong move and
+nothing to get stuck behind — a player who ignores the panel and builds their
+own maze satisfies the steps anyway. Any step **already satisfied when it comes
+up is skipped silently**, which is also what makes it replayable: open the
+walkthrough again on a wave-20 board and it picks up at whatever you genuinely
+haven't done yet, rather than telling you to place your first barricade.
+
+It's checked once per frame, redraws only when the step actually changes, and is
+dismissible for good. The suite drives all six steps by mutating the real
+`Game` — including that five barricades don't count as a maze and six do.
 
 ### The camera
 

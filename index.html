@@ -75,6 +75,18 @@
         <button class="zm zm-reset" data-zoom="reset" title="Fit the whole board  (0)" aria-label="Fit board">⤢</button>
       </div>
       <div id="abilities" role="group" aria-label="Commander abilities"></div>
+
+      <!-- First-run coaching. Each step waits on the player actually doing it. -->
+      <aside id="coach" class="hidden" role="status" aria-live="polite">
+        <div class="coach-head">
+          <span class="coach-step" id="coach-step">1/6</span>
+          <span class="coach-title" id="coach-title"></span>
+          <button id="coach-skip" title="Dismiss for good" aria-label="Dismiss the walkthrough">✕</button>
+        </div>
+        <p class="coach-body" id="coach-body"></p>
+        <div class="coach-bar"><i id="coach-fill"></i></div>
+      </aside>
+
       <div id="toast"></div>
       <div id="banner"></div>
     </div>

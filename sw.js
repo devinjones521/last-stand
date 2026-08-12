@@ -25,6 +25,7 @@ const ASSETS = [
   './src/pathfinding.js',
   './src/research.js',
   './src/viewport.js',
+  './src/tutorial.js',
   './fonts/bigshoulders-800.woff2',
   './fonts/barlow-400.woff2',
   './fonts/barlow-600.woff2',

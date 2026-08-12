@@ -11,6 +11,7 @@ import { Renderer } from './render.js';
 import { UI } from './ui.js';
 import { Audio } from './audio.js';
 import { Viewport, MIN_SCALE, MAX_SCALE } from './viewport.js';
+import { Tutorial, STEPS } from './tutorial.js';
 
 const canvas = document.getElementById('game');
 const audio = new Audio();
@@ -467,6 +468,42 @@ function doAction(action, arg) {
 }
 ui.onAction = doAction;
 
+// -- first-run coaching -----------------------------------------------------
+
+const coachEl = document.getElementById('coach');
+let coachTarget = null;
+
+const tutorial = new Tutorial(game, view, renderCoach);
+
+/** Paint the current step, and pulse whatever UI it's talking about. */
+function renderCoach() {
+  coachTarget?.classList.remove('coach-target');
+  coachTarget = null;
+
+  const step = tutorial.current;
+  if (!step) {
+    coachEl.classList.add('hidden');
+    return;
+  }
+
+  document.getElementById('coach-step').textContent = `${tutorial.step + 1}/${STEPS.length}`;
+  document.getElementById('coach-title').textContent = step.title;
+  document.getElementById('coach-body').textContent = step.body;
+  document.getElementById('coach-fill').style.width = `${(tutorial.step / STEPS.length) * 100}%`;
+  coachEl.classList.remove('hidden');
+
+  if (step.target) {
+    coachTarget = document.querySelector(step.target);
+    coachTarget?.classList.add('coach-target');
+  }
+}
+
+document.getElementById('coach-skip').addEventListener('click', () => {
+  audio.play('ui');
+  tutorial.stop(true);           // dismissing counts as done; never nag again
+  ui.toast('Walkthrough dismissed — it lives under Controls');
+});
+
 // -- overlays ---------------------------------------------------------------
 
 function closeOverlay() {
@@ -517,6 +554,9 @@ document.getElementById('overlay-card').addEventListener('click', (ev) => {
       closeOverlay();
       const name = DIFFICULTIES[chosenDifficulty].name;
       ui.toast(`New run · ${name} — build your maze, then send wave 1`, 'good');
+      // First run ever: coach it. After that the player has seen it and the
+      // walkthrough stays available under Controls.
+      if (!Tutorial.seen()) tutorial.start();
       break;
     }
     case 'continue': {
@@ -538,6 +578,12 @@ document.getElementById('overlay-card').addEventListener('click', (ev) => {
     case 'help':
       ui.showHelp();
       break;
+    case 'walkthrough':
+      // Replaying it mid-run is fine: any step already satisfied is skipped,
+      // so an established board just picks up wherever it actually is.
+      tutorial.start();
+      closeOverlay();
+      break;
     case 'research':
       researchFromGameOver = false;
       ui.showResearch(false);
@@ -553,10 +599,13 @@ document.getElementById('overlay-card').addEventListener('click', (ev) => {
       game.reset();
       view.buildId = null; view.selected = null; view.previewRoute = null;
       vp.reset(); syncZoomUi();
+      // The board is gone, so the steps it was measuring are gone with it.
+      tutorial.stop(false);
       closeOverlay();
       break;
     case 'title':
       Game.clearSave();
+      tutorial.stop(false);
       ui.showTitle(false, Game.readRecords(), chosenDifficulty);
       break;
     case 'close':
@@ -609,6 +658,16 @@ function frame(now) {
 
   if (game.wave !== prevWave) { prevWave = game.wave; ui.refresh(true); }
 
+  // Coaching advances off real game state, so it has to be checked, not fired
+  // from the handlers that would each have to remember to do it.
+  if (tutorial.active) {
+    tutorial.update();
+    if (!tutorial.active) {
+      renderCoach();
+      ui.toast('That is the whole game. One breach, forever.', 'good');
+    }
+  }
+
   // Selected tower may have been sold out from under the panel.
   if (view.selected && !game.towers.includes(view.selected)) ui.clearSelection();
 
@@ -638,7 +697,7 @@ if ('serviceWorker' in navigator && !isLocal && location.protocol === 'https:') 
 // Dev hook: poke at the running game from the browser console.
 //   __game.cash = 99999      __game.speed = 3      __game.startWave()
 window.__game = game;
-window.__dev = { game, renderer, ui, view };
+window.__dev = { game, renderer, ui, view, tutorial, viewport: vp };
 
 // Autosave on the way out.
 window.addEventListener('beforeunload', () => {

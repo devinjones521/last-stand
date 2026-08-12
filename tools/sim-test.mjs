@@ -714,6 +714,100 @@ console.log('\n--- 21. the camera ---');
   }
 }
 
+console.log('\n--- 22. first-run coaching ---');
+{
+  const { Tutorial, STEPS } = await import(B + 'tutorial.js');
+  // localStorage doesn't exist here; the guard has to swallow that, not throw.
+  check('reads its "seen" flag without a DOM', Tutorial.seen() === false);
+
+  const fresh = () => {
+    const g = new Game(null);
+    g.cash = 99999;
+    return g;
+  };
+  const stepId = (t) => t.current?.id ?? (t.finished ? 'done' : 'stopped');
+
+  {
+    const g = fresh();
+    const v = { buildId: null };
+    let changes = 0;
+    const t = new Tutorial(g, v, () => { changes++; });
+    t.start();
+    check('opens on picking up a barricade', stepId(t) === 'pick', stepId(t));
+
+    // Each step advances only once the game state actually says so.
+    v.buildId = 'barricade';
+    t.update();
+    check('picking one advances to walling', stepId(t) === 'wall', stepId(t));
+
+    for (let y = 3; y < 8; y++) g.place(10, y, 'barricade');
+    t.update();
+    check('five walls is not yet a maze', stepId(t) === 'wall', stepId(t));
+    g.place(10, 8, 'barricade');
+    t.update();
+    check('six walls advances to placing a gun', stepId(t) === 'gun', stepId(t));
+
+    g.place(12, 6, 'mg');
+    t.update();
+    check('a gun advances to sending the wave', stepId(t) === 'send', stepId(t));
+
+    g.startWave();
+    t.update();
+    check('starting the wave advances to abilities', stepId(t) === 'ability', stepId(t));
+
+    g.useAbility('overcharge', null);
+    t.update();
+    check('using an ability advances to upgrading', stepId(t) === 'upgrade', stepId(t));
+
+    g.upgrade(g.towers.find((x) => !x.stats.inert), null);
+    t.update();
+    check('upgrading finishes it', !t.active && t.finished, stepId(t));
+    // One redraw per step shown, plus one to take the panel away at the end -
+    // and nothing at all on the frames in between.
+    check('it redrew once per step, not once per frame',
+      changes === STEPS.length + 1, String(changes));
+
+    t.update(); // must be inert once finished
+    check('finishing twice is harmless', !t.active && t.finished);
+  }
+
+  {
+    // Replaying it on an established board must not demand things already done.
+    const g = fresh();
+    for (let y = 3; y < 12; y++) g.place(10, y, 'barricade');
+    g.place(12, 6, 'mg');
+    const t = new Tutorial(g, { buildId: null });
+    t.start();
+    check('an existing maze skips straight past the building steps',
+      stepId(t) === 'send', stepId(t));
+  }
+
+  {
+    // A player who did literally everything before opening it gets no panel.
+    const g = fresh();
+    for (let y = 3; y < 12; y++) g.place(10, y, 'barricade');
+    g.place(12, 6, 'mg');
+    g.startWave();
+    g.useAbility('cryoburst', null);
+    g.upgrade(g.towers.find((x) => !x.stats.inert), null);
+    const t = new Tutorial(g, { buildId: null });
+    t.start();
+    check('nothing left to teach closes it immediately', !t.active && t.finished, stepId(t));
+  }
+
+  {
+    const g = fresh();
+    const t = new Tutorial(g, { buildId: null });
+    t.start();
+    t.stop(false);
+    check('stopping without completing leaves it unfinished', !t.active && !t.finished);
+  }
+
+  check('every step has a title, a body and a predicate',
+    STEPS.every((s) => s.id && s.title && s.body && typeof s.done === 'function'));
+  check('step ids are unique', new Set(STEPS.map((s) => s.id)).size === STEPS.length);
+}
+
 console.log(`\n${fails === 0 ? 'ALL CHECKS PASSED' : `${fails} CHECK(S) FAILED`}\n`);
 process.exit(fails === 0 ? 0 : 1);
 

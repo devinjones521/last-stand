@@ -246,6 +246,57 @@ main { display: flex; flex: 1 1 auto; min-height: 0; }
 .zm-reset { display: none; }
 #zoom.is-zoomed .zm-reset { display: flex; color: var(--hazard); }
 
+/* -- first-run coaching ---------------------------------------------------
+   One instruction at a time, waiting on the player to actually do it. Sits
+   top-left of the stage, clear of the zoom cluster and the ability bar. */
+
+#coach {
+  position: absolute; top: 22px; left: 22px; z-index: 4;
+  width: 268px; max-width: calc(100% - 44px);
+  background: rgba(18,20,14,.94);
+  border: 1px solid var(--rule); border-left: 3px solid var(--hazard);
+  padding: 10px 12px 11px;
+  box-shadow: 0 10px 34px rgba(0,0,0,.6);
+  animation: coach-in .28s ease-out;
+}
+#coach.hidden { display: none; }
+@keyframes coach-in {
+  from { opacity: 0; transform: translateX(-10px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.coach-head { display: flex; align-items: baseline; gap: 8px; }
+.coach-step {
+  font-family: var(--mono); font-size: 9px; color: var(--hazard);
+  letter-spacing: .08em; font-variant-numeric: tabular-nums;
+}
+.coach-title {
+  flex: 1 1 auto;
+  font-family: var(--display); font-weight: 800; font-size: 15px;
+  letter-spacing: .04em; color: var(--canvas); line-height: 1.1;
+}
+#coach-skip {
+  flex: 0 0 auto; background: none; border: none; padding: 2px 0 2px 6px;
+  color: var(--faint); font-size: 13px; line-height: 1; cursor: pointer;
+}
+#coach-skip:hover { color: var(--oxide-ink); }
+
+.coach-body {
+  margin: 6px 0 0; font-size: var(--t-fine); line-height: 1.5; color: var(--muted);
+}
+.coach-bar { margin-top: 9px; height: 2px; background: var(--rule-soft); }
+.coach-bar i { display: block; height: 100%; background: var(--hazard); transition: width .3s; }
+
+/* The element the current step is about. Pulses until the step is satisfied. */
+.coach-target {
+  animation: coach-pulse 1.5s ease-in-out infinite;
+  position: relative; z-index: 1;
+}
+@keyframes coach-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(232,145,42,0); }
+  50%      { box-shadow: 0 0 0 2px rgba(232,145,42,.85), 0 0 14px rgba(232,145,42,.35); }
+}
+
 /* -- side console --------------------------------------------------------- */
 
 #side {
@@ -698,7 +749,8 @@ kbd {
   #app { height: auto; min-height: 100%; }
   main { flex-direction: column; }
 
-  #stage { padding: 8px; flex: 0 0 auto; }
+  /* Column, so the coach panel below can sit in flow under the board. */
+  #stage { padding: 8px; flex: 0 0 auto; flex-direction: column; align-items: stretch; }
   #game { width: 100%; height: auto; max-height: 56vh; }
 
   #side {
@@ -733,6 +785,15 @@ kbd {
   /* No hover to reveal these on a touch screen, and a finger needs the room. */
   #zoom { top: 14px; right: 14px; opacity: 1; }
   .zm { width: 44px; height: 44px; font-size: 18px; }
+
+  /* The board is short on a phone, so the coach sits under it rather than on
+     top of the ground the step is asking the player to build on. */
+  #coach {
+    position: static; width: auto; max-width: none;
+    margin: 8px 0 0; border-left-width: 3px;
+    animation: none;
+  }
+  #coach-skip { padding: 4px 0 4px 10px; font-size: 15px; }
   .overlay-card { padding: 0 18px 20px; }
   .overlay-card::before { margin: 0 -18px 20px; }
   .overlay-card h1 { font-size: 24px; }

@@ -608,7 +608,7 @@ export class UI {
   showHelp() {
     this.showOverlay(`
       <h1>CONTROLS</h1>
-      <div class="sub">All of it is mouse-driven; the keys just make it faster.</div>
+      <div class="sub">All of it is pointer-driven; the keys just make it faster.</div>
       <ul>
         <li><kbd>1</kbd>–<kbd>8</kbd> pick a tower to build</li>
         <li><kbd>Click</kbd> place it, or click a placed tower to inspect it</li>
@@ -616,16 +616,25 @@ export class UI {
         <li><kbd>Right-click</kbd> / <kbd>Esc</kbd> cancel build mode</li>
         <li><kbd>Q</kbd> airstrike &nbsp; <kbd>W</kbd> rally flare &nbsp; <kbd>E</kbd> overcharge &nbsp; <kbd>R</kbd> cryo burst</li>
         <li><kbd>Enter</kbd> send the next wave &nbsp; <kbd>Space</kbd> pause</li>
-        <li><kbd>S</kbd> cycle speed 1× → 2× → 3×</li>
+        <li><kbd>S</kbd> cycle speed 1× → 2× → 3× → 4×</li>
         <li><kbd>U</kbd> upgrade selected &nbsp; <kbd>X</kbd> sell selected</li>
         <li><kbd>A</kbd> toggle auto-start</li>
+        <li><kbd>Scroll</kbd> / <kbd>+</kbd> <kbd>−</kbd> zoom the board &nbsp; <kbd>0</kbd> fit it back</li>
       </ul>
+      <div class="promise">
+        <b>On a touch screen:</b> pinch to zoom and two fingers to pan. Once you're
+        zoomed in, one finger drags the board around; tapping and dragging out a
+        barricade run work the same at any zoom.
+      </div>
       <div class="promise">
         Stuck on money? Cash banked at the end of a wave earns
         <b>${pct(this.game.balance.interestRate)} interest</b> (up to $${this.game.balance.interestCap}).
         Saving for one big upgrade genuinely beats dribbling it away.
       </div>
-      <div class="overlay-actions"><button class="go" data-act="close">Back</button></div>`);
+      <div class="overlay-actions">
+        <button class="go" data-act="close">Back</button>
+        <button data-act="walkthrough">Replay Walkthrough</button>
+      </div>`);
   }
 
   showMenu() {
