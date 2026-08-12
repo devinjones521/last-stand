@@ -734,6 +734,104 @@ console.log('\n--- 19c. records are per map AND difficulty ---');
   check('and lands on the original board', g3.map.id === 'yard');
 }
 
+console.log('\n--- 19d. waves in flight are bounded ---');
+{
+  // Found by the fuzzer: nothing capped concurrent waves, so a held Enter key
+  // (~30 repeats/sec) queued ninety of them. Measured in a browser: 60 stacked
+  // waves rendered at 96ms/frame, 90 at 214ms - a run-ending freeze.
+  const g = new Game(null);
+  g.cash = 999999;
+  const cap = g.balance.maxConcurrentWaves;
+  check('there is a cap at all', Number.isFinite(cap) && cap >= 1, String(cap));
+
+  const results = [];
+  for (let i = 0; i < 90; i++) results.push(g.startWave());
+  const okCount = results.filter((r) => r.ok).length;
+  check('spamming 90 starts only lands the cap', okCount === cap, `${okCount}/90`);
+  check('waves in flight never exceed the cap', g.runningWaves.length <= cap);
+  check('the refusal explains itself',
+    /in flight/.test(results[cap].reason ?? ''), `"${results[cap].reason}"`);
+  check('the wave counter did not run away', g.wave === cap, `wave=${g.wave}`);
+
+  // The bodies that used to pile up: 90 waves x up to 130 each.
+  run(g, 6);
+  check('the field stays sane', g.enemies.length + g.pending.length < 500,
+    `alive=${g.enemies.length} pending=${g.pending.length}`);
+
+  // The mechanic it protects is untouched: calling the NEXT wave early still pays.
+  const g2 = new Game(null);
+  g2.cash = 999999;
+  for (let i = 0; i < 8; i++) g2.place(4 + i * 2, 10, 'mg');
+  g2.startWave();
+  run(g2, 1);
+  const before = g2.cash;
+  const early = g2.startWave();
+  check('an early call is still allowed', early.ok);
+  check('and still pays its bonus', g2.cash > before, `+${Math.round(g2.cash - before)}`);
+
+  // And the cap lifts again as the field drains, rather than locking you out.
+  let guard = 0;
+  while (g2.runningWaves.length >= g2.balance.maxConcurrentWaves && guard < 300 / STEP) {
+    g2.update(STEP); guard++;
+  }
+  check('the cap lifts once waves finish', g2.startWave().ok,
+    `inFlight=${g2.runningWaves.length}`);
+}
+
+console.log('\n--- 19e. fuzz: random play never breaks the rules ---');
+{
+  const { fuzz, invariants } = await import(new URL('./fuzz.mjs', import.meta.url).href);
+
+  // First: prove the detector detects. A fuzzer whose invariants can't fail is
+  // worse than no fuzzer, because it reports success forever.
+  {
+    const clean = new Game(null);
+    check('a healthy game trips nothing', invariants(clean).length === 0,
+      invariants(clean).join(' | '));
+
+    const breaks = [
+      ['negative cash', (g) => { g.cash = -5; }],
+      ['NaN cash', (g) => { g.cash = NaN; }],
+      ['camp over max', (g) => { g.baseHp = g.maxBaseHp + 10; }],
+      ['a bogus phase', (g) => { g.phase = 'elsewhere'; }],
+      ['a severed route', (g) => { g.route = []; }],
+      ['a tower on the breach', (g) => {
+        const t = { defId: 'mg', x: g.spawn.x, y: g.spawn.y, level: 1, stats: {}, damageDealt: 0 };
+        g.towers.push(t); g.towerAt[idx(t.x, t.y)] = t;
+      }],
+      ['towerAt out of step with towers[]', (g) => {
+        g.cash = 9999; g.place(10, 5, 'mg'); g.towers.pop();
+      }],
+      ['a dead enemy still listed', (g) => {
+        g.startWave(); g.update(1); if (g.enemies[0]) g.enemies[0].hp = 0;
+      }],
+      ['an enemy off the board', (g) => {
+        g.startWave(); g.update(1); if (g.enemies[0]) { g.enemies[0].cx = 999; }
+      }],
+      ['an enemy at NaN', (g) => {
+        g.startWave(); g.update(1); if (g.enemies[0]) g.enemies[0].x = NaN;
+      }],
+    ];
+    let caught = 0;
+    const missed = [];
+    for (const [name, breakIt] of breaks) {
+      const g = new Game(null);
+      breakIt(g);
+      if (invariants(g).length > 0) caught++; else missed.push(name);
+    }
+    check(`it catches all ${breaks.length} deliberately broken states`,
+      caught === breaks.length, `missed: ${missed.join(', ')}`);
+  }
+
+  const t0 = Date.now();
+  const res = fuzz(6, 20260812, { steps: 9000 });
+  const ms = Date.now() - t0;
+  console.log(`  info  ${res.runs} random games, ${res.totalActions} actions, ` +
+    `deepest wave ${res.deepest}, ${ms}ms`);
+  check('no invariant was ever violated', res.violations.length === 0,
+    res.violations.slice(0, 3).map((v) => `seed ${v.seed}: ${v.problem}`).join(' | '));
+}
+
 console.log('\n--- 20. the offline bundle is complete ---');
 {
   // research.js shipped without ever being added to the service worker's asset

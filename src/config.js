@@ -36,6 +36,11 @@ export const BALANCE = {
   interestCap: 150,
   // Calling the next wave while the current one is still on the field.
   earlyCallBonus: 0.5, // fraction of that wave's clear bonus, paid immediately
+  // ...but only so many at once. Each stacked wave adds up to maxEnemiesPerWave
+  // more bodies, and nothing else bounds the total: at 60 in flight the frame
+  // cost measured 96ms, at 90 it was 214ms. Three is well clear of the mechanic
+  // as intended - calling the NEXT wave early - and keeps the field drawable.
+  maxConcurrentWaves: 3,
 
   // Repairing the camp between waves. Cost climbs each time you use it.
   repairChunk: 25, // hp restored per purchase

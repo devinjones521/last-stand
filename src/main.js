@@ -327,6 +327,10 @@ function tryPlace(cell) {
 
 window.addEventListener('keydown', (ev) => {
   if (ev.target.tagName === 'INPUT') return;
+  // Every shortcut here is a discrete action, and the OS repeats a held key
+  // about thirty times a second. Holding Enter used to queue ninety waves;
+  // holding S span the speed setting. None of them want auto-repeat.
+  if (ev.repeat) return;
   const k = ev.key.toLowerCase();
 
   if (k === 'escape') {
@@ -433,8 +437,13 @@ function doAction(action, arg) {
         const boss = res.script.flavour === 'boss';
         ui.banner(boss ? `WAVE ${game.wave} · BOSS` : `WAVE ${game.wave}`,
           boss ? COLORS.danger : COLORS.amber);
-        ui.refresh(true);
+      } else {
+        // Silently swallowing this made a refused wave look like a dropped
+        // click. Say why, so the cap reads as a rule rather than a glitch.
+        ui.toast(res.reason, 'bad');
+        audio.play('deny');
       }
+      ui.refresh(true);
       break;
     }
     case 'pause':

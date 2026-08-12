@@ -327,6 +327,15 @@ export class Game {
   startWave() {
     if (this.phase === 'over') return { ok: false, reason: 'Run is over' };
 
+    // Stacking waves is a real mechanic, but an unbounded one lets a held Enter
+    // key queue ninety of them, which buries the field and drops the frame rate
+    // to single digits. Nothing is taken away by this: the waves you did not
+    // call are still there to call, and the early bonus is unchanged.
+    const cap = this.balance.maxConcurrentWaves ?? Infinity;
+    if (this.runningWaves.length >= cap) {
+      return { ok: false, reason: `${cap} waves already in flight` };
+    }
+
     const stacking = this.enemies.length > 0 || this.pending.length > 0;
     this.wave += 1;
     this.stats.bestWave = Math.max(this.stats.bestWave, this.wave);

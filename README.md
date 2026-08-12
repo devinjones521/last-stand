@@ -28,7 +28,9 @@ or iOS, open the link and choose **Add to Home Screen**.
 - **The maze is emergent, not authored.** Towers *are* the walls; the game refuses
   any placement that would seal the route, so you can't softlock yourself.
 - **A headless test suite** that runs the real simulation in Node with no DOM —
-  240+ checks including a measured difficulty curve. [↓](#testing)
+  250+ checks including a measured difficulty curve — plus a **seeded fuzzer**
+  that plays randomly and asserts the rules hold after every action. It found a
+  real bug. [↓](#testing)
 - **Layered Canvas renderer** with baked terrain, an accumulating decal layer, and
   a night lighting pass. [↓](#how-the-battlefield-is-drawn)
 - **A pinch-zoom camera that costs nothing when unused** — one transform, clamped
@@ -44,6 +46,7 @@ or iOS, open the link and choose **Add to Home Screen**.
 ```bash
 npm start     # http://localhost:8080
 npm test      # headless simulation suite
+npm run fuzz  # random-play invariant fuzzer
 npm run icons # regenerate app icons
 ```
 
@@ -88,6 +91,10 @@ the new route *before* you spend anything.
 
 Cash banked at the end of a wave earns 5% interest (capped at $150), so saving
 for one big upgrade genuinely beats dribbling it into chaff.
+
+You can call the next wave while the last one is still on the field, and get
+half its clear bonus immediately for the risk. Up to **three waves** can be in
+flight at once; past that the button tells you to clear some ground first.
 
 ### Commander abilities
 
@@ -248,6 +255,7 @@ icons/                generated PNG app icons
 tools/
   generate-icons.mjs  draws the icons (hand-rolled PNG encoder, no deps)
   sim-test.mjs        headless simulation suite — npm test
+  fuzz.mjs            seeded random-play invariant fuzzer — npm run fuzz
 src/
   config.js         ALL balance numbers, difficulties, colours
   maps.js           the four boards: breach, camp and permanent terrain
@@ -270,8 +278,51 @@ src/
 `npm test` runs the real `Game` class headlessly in Node — no DOM, no browser.
 It covers the seal rule, maze rerouting, full combat, every tower maxed, both
 branches of each, damage attribution, deterministic waves, the difficulty
-spread, and save/load (including migrating v1 saves). A 40-wave run simulates in
-well under a second, which is also the performance check.
+spread, every map, and save/load (including migrating v1 saves). A 40-wave run
+simulates in well under a second, which is also the performance check.
+
+**`npm run fuzz`** is the other half. The suite above checks that correct play
+gives correct results; the fuzzer checks that no sequence of legal-but-stupid
+actions can reach a state the game shouldn't allow. It hammers every public
+mutator in random order — building on terrain, selling mid-wave, aiming
+abilities off the board, passing branch ids that don't exist, save/load round
+trips mid-flight, restarting after a loss — and asserts a set of invariants
+after **every single action**:
+
+- the horde can always still reach the camp (nobody has sealed themselves in)
+- no tower on terrain, the breach, the camp, or on top of another tower
+- `towerAt` and `towers[]` always agree
+- no dead enemy still in the list, nothing off the board, nothing at `NaN`
+- cash never negative, camp never above max, phase always one of three
+
+It's seeded, so a failure replays exactly. The last sweep was **250 games and
+1,080,913 random actions across every map and difficulty, with no violations**.
+
+The suite also checks that the fuzzer *can* fail: it feeds `invariants()` ten
+deliberately broken states and requires all ten to be caught. A detector that
+can't fire would otherwise report success forever.
+
+That's how the wave-stacking bug below was found.
+
+#### What the fuzzer caught
+
+Calling the next wave early is a real mechanic — but nothing bounded how many
+waves could be in flight at once, and the `Enter` shortcut had no auto-repeat
+guard. A **held Enter key** fires about thirty times a second, so:
+
+| Enter held for | Waves in flight | Enemies | Frame cost |
+|---|---|---|---|
+| ~0.3s | 10 | 100 | 1.7ms |
+| 1s | 30 | 386 | 6.1ms |
+| 2s | 60 | 1,199 | **96ms** |
+| 3s | 90 | 2,608 | **214ms** |
+
+Two seconds of a stuck key took the game to 10fps and handed out ~$9k of
+early-call bonuses on the way. Fixed by ignoring auto-repeat on every shortcut
+(they're all discrete actions) and capping concurrent waves at
+`BALANCE.maxConcurrentWaves`, which is 3 — comfortably more than the mechanic
+was ever meant to allow. The same 90 presses now land 3 waves at 1.3ms/frame,
+and the button says *"3 waves in flight"* rather than silently doing nothing.
 
 ### Visual identity
 

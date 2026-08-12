@@ -323,15 +323,21 @@ export class UI {
     const btn = $('#btn-start');
     const stacking = g.enemies.length > 0 || g.pending.length > 0;
     const next = g.wave + 1;
+    const cap = g.balance.maxConcurrentWaves ?? Infinity;
+    const atCap = g.runningWaves.length >= cap;
 
-    $('#start-label').textContent = stacking
-      ? `Send Wave ${next} early`
-      : `Send Wave ${next}`;
-    $('#start-hint').textContent = stacking
-      ? `+$${Math.round((g.balance.waveBonusBase + g.balance.waveBonusPerWave * next) * g.balance.earlyCallBonus)} bonus for stacking`
-      : 'Build as long as you like — nothing starts without you';
-    btn.classList.toggle('hot', stacking);
-    btn.disabled = g.phase === 'over';
+    // At the cap the button says so rather than looking clickable and doing
+    // nothing — the refusal is a rule, not a failure.
+    $('#start-label').textContent = atCap
+      ? `${g.runningWaves.length} waves in flight`
+      : stacking ? `Send Wave ${next} early` : `Send Wave ${next}`;
+    $('#start-hint').textContent = atCap
+      ? 'Clear some of the field before calling another'
+      : stacking
+        ? `+$${Math.round((g.balance.waveBonusBase + g.balance.waveBonusPerWave * next) * g.balance.earlyCallBonus)} bonus for stacking`
+        : 'Build as long as you like — nothing starts without you';
+    btn.classList.toggle('hot', stacking && !atCap);
+    btn.disabled = g.phase === 'over' || atCap;
   }
 
   renderWavePreview() {

@@ -8,6 +8,7 @@
     "start": "node server.js",
     "dev": "node server.js",
     "test": "node tools/sim-test.mjs",
+    "fuzz": "node tools/fuzz.mjs 200",
     "icons": "node tools/generate-icons.mjs"
   }
 }
