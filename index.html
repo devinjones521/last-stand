@@ -68,6 +68,12 @@
   <main>
     <div id="stage">
       <canvas id="game"></canvas>
+      <div id="zoom" role="group" aria-label="Zoom">
+        <button class="zm" data-zoom="in" title="Zoom in  (+ · scroll · pinch)" aria-label="Zoom in">+</button>
+        <span class="zoom-level" aria-live="polite">1.0×</span>
+        <button class="zm" data-zoom="out" title="Zoom out  (− · scroll · pinch)" aria-label="Zoom out">−</button>
+        <button class="zm zm-reset" data-zoom="reset" title="Fit the whole board  (0)" aria-label="Fit board">⤢</button>
+      </div>
       <div id="abilities" role="group" aria-label="Commander abilities"></div>
       <div id="toast"></div>
       <div id="banner"></div>

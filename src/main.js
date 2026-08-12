@@ -2,7 +2,7 @@
 // Bootstrap: canvas sizing, input, the frame loop, and wiring UI to Game.
 // ---------------------------------------------------------------------------
 
-import { CANVAS_W, CANVAS_H, GRID, COLORS, DIFFICULTIES, ABILITIES } from './config.js';
+import { CANVAS_W, CANVAS_H, COLORS, DIFFICULTIES, ABILITIES } from './config.js';
 import { TOWER_ORDER } from './towers.js';
 import { idx } from './pathfinding.js';
 import { Game } from './game.js';
@@ -10,6 +10,7 @@ import { buyNode, researchMods } from './research.js';
 import { Renderer } from './render.js';
 import { UI } from './ui.js';
 import { Audio } from './audio.js';
+import { Viewport, MIN_SCALE, MAX_SCALE } from './viewport.js';
 
 const canvas = document.getElementById('game');
 const audio = new Audio();
@@ -25,6 +26,7 @@ const view = {
   placeCheck: null,
   previewRoute: null,
   aiming: null,   // id of a targeted ability waiting for a map click
+  viewport: new Viewport(),
 };
 
 /** Difficulty picked on the title screen; applied when a new run starts. */
@@ -49,17 +51,108 @@ window.addEventListener('resize', sizeCanvas);
 
 // -- input ------------------------------------------------------------------
 
+const vp = view.viewport;
+
 function cellFromEvent(ev) {
-  const rect = canvas.getBoundingClientRect();
-  const x = ((ev.clientX - rect.left) / rect.width) * CANVAS_W;
-  const y = ((ev.clientY - rect.top) / rect.height) * CANVAS_H;
-  return { x: Math.floor(x / GRID.cell), y: Math.floor(y / GRID.cell) };
+  return vp.toCell(ev.clientX, ev.clientY, canvas.getBoundingClientRect());
 }
 
 let dragging = false;
 let lastDragCell = null;
 let dragWarnedBroke = false;
 let lastHoverKey = '';
+
+// -- camera -----------------------------------------------------------------
+// Zoom exists because a 32-column board on a phone puts a cell at ~12px, which
+// is half a fingertip. Two fingers pinch and pan; with nothing being built, one
+// finger drags the board too. On a mouse it's the wheel, or a middle-drag.
+
+/** Live pointers by id, so a second finger can be recognised as a pinch. */
+const pointers = new Map();
+let pinch = null;        // { dist, cx, cy } from the last pinch frame
+let panning = null;      // { x, y } last client position of a pan drag
+let panCandidate = null; // a press that will become a pan if it travels far enough
+let suppressTap = false; // a gesture happened; don't also treat the lift as a tap
+
+function clientOf(ev) { return { x: ev.clientX, y: ev.clientY }; }
+
+function pinchState() {
+  const [a, b] = [...pointers.values()];
+  return {
+    dist: Math.hypot(a.x - b.x, a.y - b.y),
+    cx: (a.x + b.x) / 2,
+    cy: (a.y + b.y) / 2,
+  };
+}
+
+function beginPinch() {
+  // A pinch cancels whatever the first finger was doing — but anything already
+  // built stays built. Placement is never undone behind the player's back.
+  dragging = false;
+  lastDragCell = null;
+  panning = null;
+  panCandidate = null;
+  suppressTap = true;
+  view.hover = null;
+  view.previewRoute = null;
+  lastHoverKey = '';
+  pinch = pinchState();
+}
+
+function updatePinch() {
+  const now = pinchState();
+  const rect = canvas.getBoundingClientRect();
+
+  // Zoom about the midpoint between the fingers, then move that midpoint with
+  // them, so the ground stays stuck to the fingers doing both at once.
+  if (pinch.dist > 8 && now.dist > 8) {
+    const anchor = vp.toWorld(now.cx, now.cy, rect);
+    vp.zoomBy(now.dist / pinch.dist, anchor.x, anchor.y);
+  }
+  const d = vp.screenToWorldDelta(now.cx - pinch.cx, now.cy - pinch.cy, rect);
+  vp.panBy(-d.x, -d.y);
+
+  pinch = now;
+  syncZoomUi();
+}
+
+function panTo(ev) {
+  const rect = canvas.getBoundingClientRect();
+  const d = vp.screenToWorldDelta(ev.clientX - panning.x, ev.clientY - panning.y, rect);
+  vp.panBy(-d.x, -d.y);
+  panning = clientOf(ev);
+}
+
+/** Zoom controls sit on the stage; the reset only appears once it does something. */
+const zoomBox = document.getElementById('zoom');
+function syncZoomUi() {
+  if (!zoomBox) return;
+  zoomBox.classList.toggle('is-zoomed', vp.zoomed);
+  zoomBox.querySelector('[data-zoom="in"]').disabled = vp.scale >= MAX_SCALE - 1e-4;
+  zoomBox.querySelector('[data-zoom="out"]').disabled = vp.scale <= MIN_SCALE + 1e-4;
+  zoomBox.querySelector('.zoom-level').textContent = `${vp.scale.toFixed(1)}×`;
+}
+
+zoomBox?.addEventListener('click', (ev) => {
+  const btn = ev.target.closest('[data-zoom]');
+  if (!btn) return;
+  audio.init();
+  audio.play('ui');
+  if (btn.dataset.zoom === 'in') vp.step(1.5);
+  else if (btn.dataset.zoom === 'out') vp.step(1 / 1.5);
+  else vp.reset();
+  syncZoomUi();
+});
+
+canvas.addEventListener('wheel', (ev) => {
+  ev.preventDefault();
+  const p = vp.toWorld(ev.clientX, ev.clientY, canvas.getBoundingClientRect());
+  // Trackpads report small deltas and mice one big one; normalise to a step.
+  vp.zoomBy(ev.deltaY < 0 ? 1.18 : 1 / 1.18, p.x, p.y);
+  lastHoverKey = '';
+  updateHover(cellFromEvent(ev));
+  syncZoomUi();
+}, { passive: false });
 
 function updateHover(cell) {
   view.hover = cell;
@@ -85,6 +178,24 @@ function updateHover(cell) {
 // Pointer Events unify mouse, touch and pen, so the same code path serves a
 // desktop drag and a finger swipe.
 canvas.addEventListener('pointermove', (ev) => {
+  if (pointers.has(ev.pointerId)) pointers.set(ev.pointerId, clientOf(ev));
+
+  if (pinch && pointers.size >= 2) { updatePinch(); return; }
+  if (panning) { panTo(ev); return; }
+
+  // A press with nothing selected becomes a pan once it clearly travels, so a
+  // tap still selects. Only when zoomed — at 1x there is nowhere to pan to and
+  // suppressing the tap would just feel broken.
+  if (panCandidate) {
+    const far = Math.hypot(ev.clientX - panCandidate.x, ev.clientY - panCandidate.y) > 7;
+    if (far && vp.zoomed) {
+      panning = clientOf(ev);
+      panCandidate = null;
+      suppressTap = true;
+      return;
+    }
+  }
+
   const cell = cellFromEvent(ev);
   updateHover(cell);
   if (dragging && view.buildId === 'barricade') placeLine(lastDragCell, cell);
@@ -98,11 +209,23 @@ canvas.addEventListener('pointerleave', () => {
 });
 
 canvas.addEventListener('pointerdown', (ev) => {
-  if (ev.button !== 0 && ev.pointerType === 'mouse') return;
+  if (ev.pointerType === 'mouse' && ev.button !== 0 && ev.button !== 1) return;
   ev.preventDefault();
   audio.init();
   // Keep receiving moves even if the finger/cursor slides off the canvas.
   canvas.setPointerCapture?.(ev.pointerId);
+  pointers.set(ev.pointerId, clientOf(ev));
+
+  if (pointers.size === 2) { beginPinch(); return; }
+  if (pointers.size > 2) return;
+
+  // Middle-drag pans on a mouse, at any zoom, whatever else is going on.
+  if (ev.pointerType === 'mouse' && ev.button === 1) {
+    panning = clientOf(ev);
+    suppressTap = true;
+    return;
+  }
+
   const cell = cellFromEvent(ev);
 
   // A targeted ability is armed: this click is the target, not a build action.
@@ -119,14 +242,30 @@ canvas.addEventListener('pointerdown', (ev) => {
     return;
   }
 
-  // Inspect mode: tap a tower to select it, tap empty ground to clear.
-  const t = game.towerAt[idx(cell.x, cell.y)];
-  if (t) { ui.selectTower(t); audio.play('ui'); } else { ui.clearSelection(); }
+  // Inspect mode. Resolved on release, so the same press can turn into a pan.
+  panCandidate = { ...clientOf(ev), cell };
+  suppressTap = false;
 });
 
 function endPointer(ev) {
+  if (ev) pointers.delete(ev.pointerId);
+
+  // Inspect mode: tap a tower to select it, tap empty ground to clear.
+  if (panCandidate && !suppressTap) {
+    const { x, y } = panCandidate.cell;
+    const t = game.inBounds(x, y) ? game.towerAt[idx(x, y)] : null;
+    if (t) { ui.selectTower(t); audio.play('ui'); } else { ui.clearSelection(); }
+  }
+  panCandidate = null;
+  panning = null;
   dragging = false;
   lastDragCell = null;
+
+  // Lifting one finger out of a pinch must not hand the other one a drag: wait
+  // until the screen is clear again.
+  if (pointers.size < 2) pinch = null;
+  if (pointers.size === 0) suppressTap = false;
+
   // Touch has no hover state, so drop the ghost preview when the finger lifts.
   if (ev?.pointerType && ev.pointerType !== 'mouse') {
     view.hover = null;
@@ -200,6 +339,12 @@ window.addEventListener('keydown', (ev) => {
     }
     return;
   }
+
+  // Zoom keys sit outside the switch below so `-` and `=` keep their literal
+  // meaning rather than being read as tower digits.
+  if (k === '+' || k === '=') { vp.step(1.5); syncZoomUi(); return; }
+  if (k === '-' || k === '_') { vp.step(1 / 1.5); syncZoomUi(); return; }
+  if (k === '0') { vp.reset(); syncZoomUi(); return; }
 
   const ability = ABILITIES.find((a) => a.key === k);
   if (ability) { triggerAbility(ability.id); return; }
@@ -367,6 +512,7 @@ document.getElementById('overlay-card').addEventListener('click', (ev) => {
       Game.clearSave();
       game.reset(chosenDifficulty);
       view.buildId = null; view.selected = null; view.previewRoute = null;
+      vp.reset(); syncZoomUi();
       document.getElementById('chk-auto').checked = false;
       closeOverlay();
       const name = DIFFICULTIES[chosenDifficulty].name;
@@ -406,6 +552,7 @@ document.getElementById('overlay-card').addEventListener('click', (ev) => {
     case 'restart':
       game.reset();
       view.buildId = null; view.selected = null; view.previewRoute = null;
+      vp.reset(); syncZoomUi();
       closeOverlay();
       break;
     case 'title':
@@ -473,6 +620,7 @@ function frame(now) {
 // -- go ---------------------------------------------------------------------
 
 document.getElementById('btn-sound').classList.add('is-on');
+syncZoomUi();
 ui.mount();
 game.paused = true;
 ui.showTitle(!!Game.readSave(), Game.readRecords(), chosenDifficulty);

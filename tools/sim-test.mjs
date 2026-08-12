@@ -594,6 +594,104 @@ console.log('\n--- 19. research actually reaches the simulation ---');
     `${plainRun} -> ${buffedRun}`);
 }
 
+console.log('\n--- 20. the camera ---');
+{
+  const { Viewport, MIN_SCALE, MAX_SCALE } = await import(B + 'viewport.js');
+  const { CANVAS_W, CANVAS_H } = await import(B + 'config.js');
+  const rect = { left: 0, top: 0, width: 800, height: 500 }; // canvas CSS box
+
+  {
+    const v = new Viewport();
+    check('starts as the identity transform', v.scale === 1 && v.x === 0 && v.y === 0);
+    check('is not "zoomed" at rest', !v.zoomed);
+    // At 1x the mapping has to be exactly what it was before the camera existed.
+    const c = v.toCell(rect.width / 2, rect.height / 2, rect);
+    check('centre of the box is the centre cell', c.x === GRID.cols / 2 && c.y === GRID.rows / 2,
+      `${c.x},${c.y}`);
+    const far = v.toCell(rect.width - 1, rect.height - 1, rect);
+    check('bottom-right maps to the last cell', far.x === GRID.cols - 1 && far.y === GRID.rows - 1,
+      `${far.x},${far.y}`);
+  }
+
+  {
+    const v = new Viewport();
+    v.zoomBy(2, 512, 320);
+    check('zoom is applied', Math.abs(v.scale - 2) < 1e-9);
+    // The anchor point must not move on screen. It was dead centre, so it still is.
+    const p = v.toWorld(rect.width / 2, rect.height / 2, rect);
+    check('the zoom anchor stays put', Math.abs(p.x - 512) < 1e-6 && Math.abs(p.y - 320) < 1e-6,
+      `${p.x},${p.y}`);
+  }
+
+  {
+    const v = new Viewport();
+    // Anchoring on a corner would push the window off the board; the clamp holds.
+    v.zoomBy(3, 0, 0);
+    v.panBy(-9999, -9999);
+    check('cannot pan off the top-left', v.x === 0 && v.y === 0, `${v.x},${v.y}`);
+    v.panBy(9999, 9999);
+    check('cannot pan off the bottom-right',
+      Math.abs(v.x - (CANVAS_W - v.viewW)) < 1e-9 && Math.abs(v.y - (CANVAS_H - v.viewH)) < 1e-9,
+      `${v.x},${v.y}`);
+    check('the window is never larger than the board', v.viewW <= CANVAS_W && v.viewH <= CANVAS_H);
+  }
+
+  {
+    const v = new Viewport();
+    v.zoomBy(0.2, 512, 320);
+    check('never zooms out past fitting the board', v.scale === MIN_SCALE);
+    check('and stays anchored at the origin when it does', v.x === 0 && v.y === 0);
+    v.zoomBy(500, 512, 320);
+    check('zoom is capped', v.scale === MAX_SCALE);
+  }
+
+  {
+    // The point under a finger has to stay under it however far in you are.
+    const v = new Viewport();
+    v.zoomBy(3.4, 300, 180);
+    v.panBy(120, -40);
+    const cell = v.toCell(613, 377, rect);
+    const back = {
+      x: ((cell.x * GRID.cell - v.x) * v.scale / CANVAS_W) * rect.width,
+      y: ((cell.y * GRID.cell - v.y) * v.scale / CANVAS_H) * rect.height,
+    };
+    check('screen -> cell -> screen lands in the same cell',
+      back.x <= 613 && back.y <= 377
+      && Math.abs(613 - back.x) < (GRID.cell * v.scale / CANVAS_W) * rect.width
+      && Math.abs(377 - back.y) < (GRID.cell * v.scale / CANVAS_H) * rect.height,
+      `${back.x},${back.y}`);
+    check('every visible cell is a real cell',
+      cell.x >= 0 && cell.x < GRID.cols && cell.y >= 0 && cell.y < GRID.rows,
+      `${cell.x},${cell.y}`);
+  }
+
+  {
+    const v = new Viewport();
+    v.zoomBy(4, 100, 100);
+    v.reset();
+    check('reset returns to the untouched view', v.scale === 1 && v.x === 0 && v.y === 0);
+  }
+
+  {
+    // A pinch is a zoom and a pan in the same frame; centring must survive both.
+    const v = new Viewport();
+    v.zoomBy(2.5, 512, 320);
+    v.centerOn(SPAWN.x * GRID.cell, SPAWN.y * GRID.cell);
+    check('centring on the breach keeps the window on the board',
+      v.x >= 0 && v.y >= 0 && v.x + v.viewW <= CANVAS_W + 1e-9 && v.y + v.viewH <= CANVAS_H + 1e-9,
+      `${v.x},${v.y}`);
+    const mid = v.y + v.viewH / 2;
+    check('and the breach is vertically centred', Math.abs(mid - SPAWN.y * GRID.cell) < 1e-6);
+  }
+
+  {
+    const v = new Viewport();
+    v.zoomBy(2, 512, 320);
+    const d = v.screenToWorldDelta(rect.width / 2, 0, rect);
+    check('a half-box drag moves half a window', Math.abs(d.x - v.viewW / 2) < 1e-9, `${d.x}`);
+  }
+}
+
 console.log(`\n${fails === 0 ? 'ALL CHECKS PASSED' : `${fails} CHECK(S) FAILED`}\n`);
 process.exit(fails === 0 ? 0 : 1);
 

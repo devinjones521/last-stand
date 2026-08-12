@@ -30,6 +30,8 @@ or iOS, open the link and choose **Add to Home Screen**.
   80+ checks including a measured difficulty curve. [↓](#testing)
 - **Layered Canvas renderer** with baked terrain, an accumulating decal layer, and
   a night lighting pass. [↓](#how-the-battlefield-is-drawn)
+- **A pinch-zoom camera that costs nothing when unused** — one transform, clamped
+  so 1× is provably the identity. [↓](#the-camera)
 - **Deterministic waves** — wave 37 is identical every run, so it can be learned.
 
 ## Run it locally
@@ -146,6 +148,12 @@ difficulty.
 | `S` | Cycle speed 1× → 2× → 3× → 4× |
 | `U` / `X` | Upgrade / sell the selected tower |
 | `A` | Toggle auto-start |
+| Scroll / `+` `−` | Zoom the board (`0` fits it back) |
+| Middle-drag | Pan when zoomed in |
+
+On a touch screen: **pinch to zoom**, two fingers to pan, and one finger to drag
+the board around once you're zoomed in. Tapping and dragging out a barricade run
+work the same at any zoom.
 
 ---
 
@@ -214,6 +222,7 @@ src/
   enemies.js        enemy defs + per-wave scaling
   waves.js          deterministic wave generation
   pathfinding.js    flow-field BFS (see below)
+  viewport.js       zoom/pan camera (see below)
   game.js           simulation: state and rules, no drawing
   render.js         all canvas drawing, no state mutation
   ui.js             DOM sidebar, panels, overlays
@@ -263,6 +272,35 @@ readable across the whole board, so legibility beats mood.
 Zombies share a single draw routine parameterised per archetype (`BODY` in
 `render.js` — torso width, head size, reach, stride speed, lean, plus flags like
 `legless`, `visor`, `maw`, `plates`). One renderer, ten distinct silhouettes.
+
+### The camera
+
+32 columns across a phone puts a cell at about 12px — half a fingertip, and the
+main reason the game didn't really work on a phone. So the board can be pinched
+in to 4.5×, which takes that cell to roughly 56px.
+
+The camera is deliberately shaped so the zero case is free:
+
+- **Zoom never goes below 1× and the pan is always clamped inside the board**, so
+  the board always fills the frame and there is no letterboxing to draw around
+  at any zoom. At rest it is the identity transform — the desktop view is
+  exactly what it was before the camera existed.
+- It's applied as **one transform at the top of the frame**, so every draw
+  routine still works in world coordinates and none of them know it exists.
+  Shake is divided back down by the zoom and the impact punch scales about the
+  centre of the *view*, so a kick is the same number of screen pixels however
+  far in you are.
+- Input runs the same transform backwards, so a tap, a barricade drag and an
+  airstrike all land on the cell actually under the finger. The suite checks
+  that a screen point survives the round trip, and that abilities land on the
+  aimed cell at 1×, 2.5×, 3.2× and 4.5×.
+
+One thing did fall out of it: the baked tower layer is a 1024×640 bitmap, so
+magnifying it just magnifies its pixels — sandbags went soft while the turret
+drawn live above them stayed sharp, which reads as a bug. Past 1.25× the static
+art is drawn live instead, and it costs almost nothing, because the further in
+you zoom the fewer towers are on screen. On a filled 544-tower board: **1.9ms at
+1×, and 2.9ms at the worst-case 2×**.
 
 ### Game feel
 

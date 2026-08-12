@@ -212,18 +212,28 @@ export class Renderer {
     this.time += dt;
 
     ctx.save();
-    // Camera: a scale punch on heavy impacts, plus positional shake. Scaling
-    // about the centre keeps the board framed while it kicks.
+    // The zoom/pan window goes on first, so impact shake and everything after
+    // it stays in world space and needs no knowledge of the camera.
+    if (view.viewport) view.viewport.apply(ctx);
+
+    // Camera: a scale punch on heavy impacts, plus positional shake. Both are
+    // measured against what's on screen — punch scales about the centre of the
+    // *view*, and shake is divided back down by zoom so a kick is the same
+    // number of screen pixels however far in you are. At 1x the view centre is
+    // the board centre and the divisor is 1, so this is the original behaviour.
+    const zoom = view.viewport?.scale ?? 1;
+    const cx = view.viewport ? view.viewport.x + view.viewport.viewW / 2 : CANVAS_W / 2;
+    const cy = view.viewport ? view.viewport.y + view.viewport.viewH / 2 : CANVAS_H / 2;
     if (game.punch > 0.0005) {
       const k = 1 + game.punch;
-      ctx.translate(CANVAS_W / 2, CANVAS_H / 2);
+      ctx.translate(cx, cy);
       ctx.scale(k, k);
-      ctx.translate(-CANVAS_W / 2, -CANVAS_H / 2);
+      ctx.translate(-cx, -cy);
     }
     if (game.shake > 0.2) {
       ctx.translate(
-        (Math.random() - 0.5) * game.shake,
-        (Math.random() - 0.5) * game.shake,
+        ((Math.random() - 0.5) * game.shake) / zoom,
+        ((Math.random() - 0.5) * game.shake) / zoom,
       );
     }
 
@@ -240,11 +250,23 @@ export class Renderer {
     this.drawBase();
     this.drawGroundEffects();
 
-    if (game.buildVersion !== this.builtVersion) {
-      this.builtVersion = game.buildVersion;
-      this.bakeTowers();
+    // The tower bake is a 1024x640 bitmap, so magnifying it just magnifies its
+    // pixels — sandbags go soft while the live-drawn turret above them stays
+    // sharp, which reads as a bug. Past a modest zoom, draw the static art live
+    // instead. It costs nothing: the deeper you go the fewer towers are on
+    // screen, so the work shrinks exactly as the per-tower price goes up.
+    if (zoom > 1.25) {
+      const vp = view.viewport;
+      for (const t of game.towers) {
+        if (this.visible(vp, t.x, t.y)) this.drawTowerStatic(ctx, t);
+      }
+    } else {
+      if (game.buildVersion !== this.builtVersion) {
+        this.builtVersion = game.buildVersion;
+        this.bakeTowers();
+      }
+      ctx.drawImage(this.towerLayer, 0, 0, CANVAS_W, CANVAS_H);
     }
-    ctx.drawImage(this.towerLayer, 0, 0, CANVAS_W, CANVAS_H);
     for (const t of game.towers) this.drawTower(t, view);
 
     this.drawEnemies();
@@ -558,38 +580,47 @@ export class Renderer {
   bakeTowers() {
     const g = this.towerCtx;
     g.clearRect(0, 0, CANVAS_W, CANVAS_H);
+    for (const t of this.game.towers) this.drawTowerStatic(g, t);
+  }
 
-    for (const t of this.game.towers) {
-      const def = TOWER_DEFS[t.defId];
-      const x = (t.x + 0.5) * CELL;
-      const y = (t.y + 0.5) * CELL;
+  /** One tower's unchanging art. Baked in bulk, or drawn live when zoomed in. */
+  drawTowerStatic(g, t) {
+    const def = TOWER_DEFS[t.defId];
+    const x = (t.x + 0.5) * CELL;
+    const y = (t.y + 0.5) * CELL;
 
-      g.save();
-      g.translate(x, y);
-      g.fillStyle = 'rgba(0,0,0,0.42)';
-      g.fillRect(-CELL / 2 + 2, -CELL / 2 + 4, CELL - 4, CELL - 4);
+    g.save();
+    g.translate(x, y);
+    g.fillStyle = 'rgba(0,0,0,0.42)';
+    g.fillRect(-CELL / 2 + 2, -CELL / 2 + 4, CELL - 4, CELL - 4);
 
-      if (def.shape === 'wall') {
-        this.drawBarricade(g, t);
-      } else {
-        // Sandbag pad, gains rows as the tower levels.
-        g.fillStyle = '#4a4638';
-        g.fillRect(-CELL / 2 + 2, -CELL / 2 + 2, CELL - 4, CELL - 4);
-        g.fillStyle = '#5c5744';
-        const rows = 2 + Math.min(2, Math.floor((t.level - 1) / 3));
-        for (let r = 0; r < rows; r++) {
-          for (let c = 0; c < 3; c++) {
-            g.fillRect(-13 + c * 9 + (r % 2 ? 3 : 0), -13 + r * 8, 8, 6);
-          }
+    if (def.shape === 'wall') {
+      this.drawBarricade(g, t);
+    } else {
+      // Sandbag pad, gains rows as the tower levels.
+      g.fillStyle = '#4a4638';
+      g.fillRect(-CELL / 2 + 2, -CELL / 2 + 2, CELL - 4, CELL - 4);
+      g.fillStyle = '#5c5744';
+      const rows = 2 + Math.min(2, Math.floor((t.level - 1) / 3));
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < 3; c++) {
+          g.fillRect(-13 + c * 9 + (r % 2 ? 3 : 0), -13 + r * 8, 8, 6);
         }
-        g.strokeStyle = 'rgba(0,0,0,0.5)';
-        g.lineWidth = 1;
-        g.strokeRect(-CELL / 2 + 2, -CELL / 2 + 2, CELL - 4, CELL - 4);
       }
-      g.restore();
-
-      if (def.maxLevel > 1) this.drawLevelPips(g, t, x, y, t.stats.color);
+      g.strokeStyle = 'rgba(0,0,0,0.5)';
+      g.lineWidth = 1;
+      g.strokeRect(-CELL / 2 + 2, -CELL / 2 + 2, CELL - 4, CELL - 4);
     }
+    g.restore();
+
+    if (def.maxLevel > 1) this.drawLevelPips(g, t, x, y, t.stats.color);
+  }
+
+  /** Is this cell inside the camera window (with a cell of slack)? */
+  visible(vp, cx, cy) {
+    if (!vp) return true;
+    return (cx + 1) * CELL >= vp.x - CELL && cx * CELL <= vp.x + vp.viewW + CELL
+        && (cy + 1) * CELL >= vp.y - CELL && cy * CELL <= vp.y + vp.viewH + CELL;
   }
 
   /** Per-frame tower work: just the rotating turret and any selection ring. */

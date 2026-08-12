@@ -210,6 +210,42 @@ main { display: flex; flex: 1 1 auto; min-height: 0; }
   touch-action: none;
 }
 
+/* -- zoom controls --------------------------------------------------------
+   Pinch and the wheel are the real controls; these exist so the feature is
+   discoverable at all, and so it's reachable without a gesture. Kept quiet
+   until hovered so it never competes with the board. */
+
+#zoom {
+  position: absolute; top: 22px; right: 22px; z-index: 3;
+  display: flex; flex-direction: column; align-items: stretch;
+  opacity: .45; transition: opacity .15s;
+}
+#stage:hover #zoom, #zoom:focus-within, #zoom.is-zoomed { opacity: 1; }
+
+.zm {
+  width: 34px; height: 32px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(20,22,15,.85); border: 1px solid var(--rule);
+  color: var(--muted); font-size: 15px; line-height: 1;
+  margin-top: -1px; cursor: pointer;
+  transition: color .12s, border-color .12s, background .12s;
+}
+.zm:first-child { margin-top: 0; }
+.zm:hover:not(:disabled) { color: var(--canvas); border-color: var(--muted); background: rgba(38,42,30,.92); }
+.zm:disabled { opacity: .3; cursor: default; }
+
+.zoom-level {
+  font-family: var(--mono); font-size: 9px; text-align: center;
+  padding: 3px 0; color: var(--hazard-dim);
+  background: rgba(20,22,15,.85);
+  border: 1px solid var(--rule); border-top: none; border-bottom: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Fitting the board back is only an action once you've left it. */
+.zm-reset { display: none; }
+#zoom.is-zoomed .zm-reset { display: flex; color: var(--hazard); }
+
 /* -- side console --------------------------------------------------------- */
 
 #side {
@@ -693,6 +729,10 @@ kbd {
   .rs-blurb { min-height: 0; }
   #abilities { bottom: 8px; gap: 4px; }
   .ab { width: 68px; padding: 11px 0 9px; }
+
+  /* No hover to reveal these on a touch screen, and a finger needs the room. */
+  #zoom { top: 14px; right: 14px; opacity: 1; }
+  .zm { width: 44px; height: 44px; font-size: 18px; }
   .overlay-card { padding: 0 18px 20px; }
   .overlay-card::before { margin: 0 -18px 20px; }
   .overlay-card h1 { font-size: 24px; }
