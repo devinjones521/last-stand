@@ -290,6 +290,7 @@ export class Renderer {
     // UI-ish layers stay above the darkness so they never lose legibility.
     this.drawFloaters();
     this.drawOverlay(view);
+    this.drawCursor(view);
     ctx.restore();
   }
 
@@ -1335,6 +1336,36 @@ export class Renderer {
   }
 
   // -- build overlay ---------------------------------------------------------
+
+  /**
+   * The keyboard cursor. Corner brackets rather than a filled cell, and drawn
+   * last of everything, because it shares its square with the build ghost —
+   * under it, the red "can't build here" fill swallows it completely.
+   */
+  drawCursor(view) {
+    if (!view.cursor) return;
+    const { ctx } = this;
+    const px = view.cursor.x * CELL;
+    const py = view.cursor.y * CELL;
+    const arm = 9;
+    const pulse = 0.6 + 0.4 * Math.sin(this.time * 5);
+
+    // A dark under-stroke, so the brackets hold up over pale ground too.
+    for (const [color, width] of [['rgba(0,0,0,0.75)', 4], [`rgba(255,214,130,${pulse})`, 2]]) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      for (const [cx, cy, sx, sy] of [
+        [px, py, 1, 1], [px + CELL, py, -1, 1],
+        [px, py + CELL, 1, -1], [px + CELL, py + CELL, -1, -1],
+      ]) {
+        ctx.moveTo(cx + sx * arm, cy);
+        ctx.lineTo(cx, cy);
+        ctx.lineTo(cx, cy + sy * arm);
+      }
+      ctx.stroke();
+    }
+  }
 
   drawOverlay(view) {
     const { ctx, game } = this;

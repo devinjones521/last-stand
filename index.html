@@ -67,7 +67,12 @@
 
   <main>
     <div id="stage">
-      <canvas id="game"></canvas>
+      <!-- Focusable so the board can be driven from the keyboard: arrows move a
+           cell cursor, Enter acts on it. See src/cursor.js. -->
+      <canvas id="game" tabindex="0" role="application"
+              aria-label="Battlefield. Arrow keys move the cursor, Enter builds or inspects, Escape cancels."
+              aria-describedby="board-status"></canvas>
+      <p id="board-status" class="sr-only" role="status" aria-live="polite"></p>
       <div id="zoom" role="group" aria-label="Zoom">
         <button class="zm" data-zoom="in" title="Zoom in  (+ · scroll · pinch)" aria-label="Zoom in">+</button>
         <span class="zoom-level" aria-live="polite">1.0×</span>

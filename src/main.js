@@ -12,6 +12,7 @@ import { UI } from './ui.js';
 import { Audio } from './audio.js';
 import { Viewport, MIN_SCALE, MAX_SCALE } from './viewport.js';
 import { Tutorial, STEPS } from './tutorial.js';
+import { moveCursor, describeCell, actionForCell, clampCell } from './cursor.js';
 
 const canvas = document.getElementById('game');
 const audio = new Audio();
@@ -27,6 +28,7 @@ const view = {
   placeCheck: null,
   previewRoute: null,
   aiming: null,   // id of a targeted ability waiting for a map click
+  cursor: null,   // keyboard cell cursor, only while the board has focus
   viewport: new Viewport(),
 };
 
@@ -323,6 +325,110 @@ function tryPlace(cell) {
   ui.refresh(true);
 }
 
+// -- keyboard control of the board ------------------------------------------
+
+const boardStatus = document.getElementById('board-status');
+const ARROWS = {
+  arrowleft: [-1, 0], arrowright: [1, 0], arrowup: [0, -1], arrowdown: [0, 1],
+};
+
+/**
+ * Is the player *driving the board with the keyboard*? That's what decides who
+ * gets Enter, and whether a cursor is drawn at all.
+ *
+ * Clicking the canvas focuses it too, and a mouse player should see none of
+ * this — no cursor brackets, and Enter still sends the next wave. So focus
+ * alone isn't enough: the board also has to have been reached by key. This is
+ * what :focus-visible does for the outline, tracked explicitly so the behaviour
+ * doesn't depend on a UA heuristic.
+ */
+let keyboardNav = false;
+function boardFocused() { return keyboardNav && document.activeElement === canvas; }
+
+// Tab is how you arrive; a pointer press is how you leave keyboard mode.
+window.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Tab' || (ARROWS[ev.key.toLowerCase()] && document.activeElement === canvas)) {
+    keyboardNav = true;
+  }
+}, true);   // capture, so it's set before the main handler reads it
+canvas.addEventListener('pointerdown', () => { keyboardNav = false; }, true);
+
+function say(text) {
+  if (boardStatus) boardStatus.textContent = text;
+}
+
+/** Move the cursor, keep it on screen when zoomed, and announce where it is. */
+function setCursor(cell, announce = true) {
+  view.cursor = cell;
+  lastHoverKey = '';
+  updateHover(cell);
+  // A cursor you can't see is no use: follow it when the view is zoomed in.
+  if (vp.zoomed) {
+    const wx = (cell.x + 0.5) * 32;
+    const wy = (cell.y + 0.5) * 32;
+    const m = 48;
+    if (wx < vp.x + m || wx > vp.x + vp.viewW - m
+     || wy < vp.y + m || wy > vp.y + vp.viewH - m) vp.centerOn(wx, wy);
+  }
+  if (announce) say(describeCell(game, cell.x, cell.y));
+}
+
+/** Where the cursor was last, so focusing again returns you to it. */
+let lastCursor = null;
+
+/**
+ * Keep the cursor in step with focus. Polled once a frame rather than driven by
+ * focus/blur events: those don't fire reliably when the document itself isn't
+ * focused, which left a focused board with no cursor — and then Enter fell
+ * through to sending a wave instead of acting on the cell.
+ */
+function syncBoardFocus() {
+  const focused = boardFocused();
+  if (focused && !view.cursor) {
+    // Start at the breach — the one cell that means something on every map.
+    setCursor(lastCursor ?? clampCell(game.spawn.x, game.spawn.y));
+  } else if (!focused && view.cursor) {
+    lastCursor = view.cursor;
+    view.cursor = null;
+    view.hover = null;
+    view.previewRoute = null;
+    lastHoverKey = '';
+  }
+}
+
+/** Enter/Space on the focused board. Returns true if it handled the key. */
+function activateCursor() {
+  // Establish the cursor on first use rather than bailing: falling through
+  // here would send a wave when the player meant to act on a cell.
+  if (!view.cursor) setCursor(lastCursor ?? clampCell(game.spawn.x, game.spawn.y));
+  const cell = view.cursor;
+  if (!cell) return false;
+
+  switch (actionForCell(view, game, cell)) {
+    case 'ability':
+      fireAbility(view.aiming, cell);
+      say(describeCell(game, cell.x, cell.y));
+      return true;
+    case 'place': {
+      const before = game.towers.length;
+      tryPlace(cell);
+      say(game.towers.length > before
+        ? `Built. ${describeCell(game, cell.x, cell.y)}`
+        : `Cannot build here. ${view.placeCheck?.reason ?? ''}`);
+      return true;
+    }
+    case 'select':
+      ui.selectTower(game.towerAt[idx(cell.x, cell.y)]);
+      audio.play('ui');
+      say(`Selected. ${describeCell(game, cell.x, cell.y)}. U to upgrade, X to sell.`);
+      return true;
+    default:
+      ui.clearSelection();
+      say(describeCell(game, cell.x, cell.y));
+      return true;
+  }
+}
+
 // -- keyboard ---------------------------------------------------------------
 
 window.addEventListener('keydown', (ev) => {
@@ -346,6 +452,15 @@ window.addEventListener('keydown', (ev) => {
     return;
   }
 
+  // Arrows drive the board cursor, but only while the board holds focus —
+  // otherwise they belong to whatever the player actually tabbed to.
+  if (boardFocused() && ARROWS[k]) {
+    ev.preventDefault();
+    const [dx, dy] = ARROWS[k];
+    setCursor(moveCursor(view.cursor ?? game.spawn, dx, dy, ev.shiftKey));
+    return;
+  }
+
   // Zoom keys sit outside the switch below so `-` and `=` keep their literal
   // meaning rather than being read as tower digits.
   if (k === '+' || k === '=') { vp.step(1.5); syncZoomUi(); return; }
@@ -364,9 +479,13 @@ window.addEventListener('keydown', (ev) => {
   switch (k) {
     case ' ':
       ev.preventDefault();
+      // On the focused board, Space acts on the cell like Enter does — it's the
+      // other key every other web control accepts for "activate".
+      if (boardFocused() && activateCursor()) break;
       doAction('pause');
       break;
     case 'enter':
+      if (boardFocused() && activateCursor()) break;
       doAction('start');
       break;
     case 's': {
@@ -685,6 +804,7 @@ function frame(now) {
   // Selected tower may have been sold out from under the panel.
   if (view.selected && !game.towers.includes(view.selected)) ui.clearSelection();
 
+  syncBoardFocus();
   ui.refresh();
   renderer.draw(view, real);
   requestAnimationFrame(frame);
@@ -711,7 +831,7 @@ if ('serviceWorker' in navigator && !isLocal && location.protocol === 'https:') 
 // Dev hook: poke at the running game from the browser console.
 //   __game.cash = 99999      __game.speed = 3      __game.startWave()
 window.__game = game;
-window.__dev = { game, renderer, ui, view, tutorial, viewport: vp };
+window.__dev = { game, renderer, ui, view, tutorial, viewport: vp, syncBoardFocus };
 
 // Autosave on the way out.
 window.addEventListener('beforeunload', () => {

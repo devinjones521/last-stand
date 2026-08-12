@@ -832,6 +832,62 @@ console.log('\n--- 19e. fuzz: random play never breaks the rules ---');
     res.violations.slice(0, 3).map((v) => `seed ${v.seed}: ${v.problem}`).join(' | '));
 }
 
+console.log('\n--- 19f. the board can be driven from the keyboard ---');
+{
+  const C = await import(B + 'cursor.js');
+  const g = new Game(null);
+
+  // Movement is clamped, so a held arrow parks at the edge rather than leaving.
+  check('moves by one', JSON.stringify(C.moveCursor({ x: 5, y: 5 }, 1, 0)) === '{"x":6,"y":5}');
+  check('shift jumps five', JSON.stringify(C.moveCursor({ x: 5, y: 5 }, 0, 1, true)) === '{"x":5,"y":10}');
+  const tl = C.moveCursor({ x: 0, y: 0 }, -1, -1, true);
+  check('cannot walk off the top-left', tl.x === 0 && tl.y === 0);
+  const br = C.moveCursor({ x: GRID.cols - 1, y: GRID.rows - 1 }, 1, 1, true);
+  check('cannot walk off the bottom-right',
+    br.x === GRID.cols - 1 && br.y === GRID.rows - 1, `${br.x},${br.y}`);
+  // Every cell the cursor can reach must be a cell the game accepts.
+  let allValid = true;
+  for (let x = -3; x < GRID.cols + 3; x++) {
+    for (let y = -3; y < GRID.rows + 3; y++) {
+      const c = C.clampCell(x, y);
+      if (!g.inBounds(c.x, c.y)) allValid = false;
+    }
+  }
+  check('clamping always lands on a real cell', allValid);
+
+  // What a screen reader is told. Leads with contents, not coordinates.
+  const atBreach = C.describeCell(g, g.spawn.x, g.spawn.y);
+  const atCamp = C.describeCell(g, g.goal.x, g.goal.y);
+  check('the breach announces itself', /breach/i.test(atBreach), atBreach);
+  check('the camp announces its integrity', /camp/i.test(atCamp) && /\d/.test(atCamp), atCamp);
+
+  const rubble = g.map.obstacles.find((o) => o.kind === 'rubble');
+  const rub = C.describeCell(g, rubble.x, rubble.y);
+  check('rubble says it cannot be built on', /rubble/i.test(rub) && /cannot/i.test(rub), rub);
+
+  g.cash = 99999;
+  const t = g.place(10, 3, 'mg').tower;
+  g.upgrade(t); g.upgrade(t);
+  const desc = C.describeCell(g, 10, 3);
+  check('a tower announces its name and level', /level 3/i.test(desc), desc);
+  check('every description names its cell',
+    [atBreach, atCamp, rub, desc].every((d) => /column \d+, row \d+/.test(d)));
+  check('open ground on the route says so',
+    /route/i.test(C.describeCell(g, g.route[3].x, g.route[3].y)),
+    C.describeCell(g, g.route[3].x, g.route[3].y));
+  check('off-board is handled rather than crashing',
+    /off the board/i.test(C.describeCell(g, -1, -1)));
+
+  // Enter does the same thing the pointer would, given the same view state.
+  const v = { aiming: null, buildId: null };
+  check('Enter on empty ground clears', C.actionForCell(v, g, { x: 1, y: 1 }) === 'clear');
+  check('Enter on a tower selects it', C.actionForCell(v, g, { x: 10, y: 3 }) === 'select');
+  v.buildId = 'mg';
+  check('Enter while holding a tower builds', C.actionForCell(v, g, { x: 1, y: 1 }) === 'place');
+  v.aiming = 'airstrike';
+  check('an armed ability wins over building', C.actionForCell(v, g, { x: 1, y: 1 }) === 'ability');
+}
+
 console.log('\n--- 20. the offline bundle is complete ---');
 {
   // research.js shipped without ever being added to the service worker's asset

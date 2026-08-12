@@ -40,6 +40,8 @@ or iOS, open the link and choose **Add to Home Screen**.
   [↓](#teaching-it)
 - **Deterministic waves** — wave 37 is identical every run, so it can be learned.
 - **Four maps that move the breach without ever adding one.** [↓](#maps)
+- **Playable with no pointer at all** — the board is a focusable widget with a
+  cell cursor and live descriptions for screen readers. [↓](#playing-without-a-pointer)
 
 ## Run it locally
 
@@ -189,6 +191,9 @@ difficulty.
 | `A` | Toggle auto-start |
 | Scroll / `+` `−` | Zoom the board (`0` fits it back) |
 | Middle-drag | Pan when zoomed in |
+| `Tab` | Focus the board for keyboard play |
+| Arrows / `Shift`+arrows | Move the board cursor (5 cells with Shift) |
+| `Enter` on the board | Build, or inspect what's under the cursor |
 
 On a touch screen: **pinch to zoom**, two fingers to pan, and one finger to drag
 the board around once you're zoomed in. Tapping and dragging out a barricade run
@@ -264,6 +269,7 @@ src/
   waves.js          deterministic wave generation
   pathfinding.js    flow-field BFS (see below)
   viewport.js       zoom/pan camera (see below)
+  cursor.js         keyboard control of the board (see below)
   tutorial.js       first-run coaching steps (see below)
   game.js           simulation: state and rules, no drawing
   render.js         all canvas drawing, no state mutation
@@ -383,6 +389,43 @@ haven't done yet, rather than telling you to place your first barricade.
 It's checked once per frame, redraws only when the step actually changes, and is
 dismissible for good. The suite drives all six steps by mutating the real
 `Game` — including that five barricades don't count as a maze and six do.
+
+### Playing without a pointer
+
+Every other verb in the game already had a key — pick a tower, send a wave, fire
+an ability, zoom. The one thing that needed a pointer was the central act of
+putting a tower somewhere, which meant the game simply couldn't be played
+without a mouse or a touchscreen.
+
+The board is now a focusable widget. <kbd>Tab</kbd> to it, arrows move a cell
+cursor (<kbd>Shift</kbd> jumps five), <kbd>Enter</kbd> does whatever a click
+would have done there — build, inspect, or drop an airstrike.
+
+The interesting problem was <kbd>Enter</kbd>, which already meant "send the next
+wave". Rather than move it, **focus disambiguates**, the way the web already
+does it: with the board focused Enter acts on the cell, otherwise it sends the
+wave. Nothing was taken away, and nothing changed for a player who never presses
+Tab.
+
+Focus alone isn't quite the test, though — clicking the canvas focuses it too,
+and a mouse player should see none of this. So the board also has to have been
+*reached by keyboard*, tracked explicitly rather than leaning on a `:focus-visible`
+heuristic. Click the board and Enter still sends waves; Tab to it and it doesn't.
+
+It's driven by polling focus once a frame rather than by `focus`/`blur` events,
+which don't fire reliably when the document itself isn't focused — that left a
+focused board with no cursor, and Enter falling through to sending a wave.
+
+For screen readers, an `aria-live` region describes each cell as the cursor
+enters it, leading with what's there rather than where it is:
+
+> *"Gatling Nest, level 6. column 12, row 9."*
+> *"Rubble — cannot be built on. column 6, row 2."*
+> *"Open ground, on the route. column 14, row 10."*
+
+The cursor draws as corner brackets over a dark under-stroke, last of
+everything — it shares its square with the build ghost, and under it the red
+"can't build here" fill swallowed it completely.
 
 ### The camera
 
