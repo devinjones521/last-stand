@@ -594,7 +594,29 @@ console.log('\n--- 19. research actually reaches the simulation ---');
     `${plainRun} -> ${buffedRun}`);
 }
 
-console.log('\n--- 20. the camera ---');
+console.log('\n--- 20. the offline bundle is complete ---');
+{
+  // research.js shipped without ever being added to the service worker's asset
+  // list, which breaks the game offline while working perfectly online - so it
+  // goes unnoticed. Every module the game imports has to be in that list.
+  const { readFileSync, readdirSync } = await import('node:fs');
+  const root = new URL('../', import.meta.url);
+  const sw = readFileSync(new URL('sw.js', root), 'utf8');
+  const listed = new Set([...sw.matchAll(/'\.\/src\/([\w-]+\.(?:js|css))'/g)].map((m) => m[1]));
+  const onDisk = readdirSync(new URL('src/', root)).filter((f) => /\.(js|css)$/.test(f));
+
+  const missing = onDisk.filter((f) => !listed.has(f));
+  check('every src file is cached by the service worker', missing.length === 0,
+    `missing: ${missing.join(', ')}`);
+  const stale = [...listed].filter((f) => !onDisk.includes(f));
+  check('the service worker lists no files that no longer exist', stale.length === 0,
+    `stale: ${stale.join(', ')}`);
+
+  // A changed bundle with an unchanged cache name serves the old one forever.
+  check('the cache name is versioned', /const CACHE = 'laststand-v\d+'/.test(sw));
+}
+
+console.log('\n--- 21. the camera ---');
 {
   const { Viewport, MIN_SCALE, MAX_SCALE } = await import(B + 'viewport.js');
   const { CANVAS_W, CANVAS_H } = await import(B + 'config.js');
