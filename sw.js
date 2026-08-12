@@ -6,7 +6,7 @@
 // local development never fights a stale cache.
 // ---------------------------------------------------------------------------
 
-const CACHE = 'laststand-v4';
+const CACHE = 'laststand-v5';
 
 const ASSETS = [
   './',
@@ -54,6 +54,25 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+/** Save a good response into the cache without blocking the response. */
+function stash(request, res) {
+  if (res && res.status === 200 && res.type === 'basic') {
+    const copy = res.clone();
+    caches.open(CACHE).then((c) => c.put(request, copy));
+  }
+  return res;
+}
+
+/** Network first, cache only as the offline fallback. */
+function fresh(event, fallbackKey) {
+  event.respondWith(
+    fetch(event.request)
+      .then((res) => stash(fallbackKey ?? event.request, res))
+      .catch(() => caches.match(fallbackKey ?? event.request)
+        .then((r) => r ?? caches.match('./'))),
+  );
+}
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return;
@@ -61,30 +80,28 @@ self.addEventListener('fetch', (event) => {
   // Navigations: try the network first so a deployed update lands promptly,
   // but fall back to the cached shell when offline.
   if (request.mode === 'navigate') {
-    event.respondWith(
-      fetch(request)
-        .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put('./index.html', copy));
-          return res;
-        })
-        .catch(() => caches.match('./index.html').then((r) => r ?? caches.match('./'))),
-    );
+    fresh(event, './index.html');
     return;
   }
 
-  // Everything else: serve from cache, refresh it in the background.
+  const url = new URL(request.url);
+  const sameOrigin = url.origin === self.location.origin;
+  const isAppCode = sameOrigin && /\/src\/.*\.(js|css)$/.test(url.pathname);
+
+  // App code goes network-first for the same reason the shell does, and it has
+  // to match the shell's strategy or a deploy serves NEW index.html against an
+  // OLD cached bundle for one load. That mismatch is invisible until the day
+  // the markup and the code actually disagree, so they move together.
+  if (isAppCode) {
+    fresh(event);
+    return;
+  }
+
+  // Fonts, icons and the manifest never change without a filename change, so
+  // they stay cache-first: instant, and refreshed quietly in the background.
   event.respondWith(
     caches.match(request).then((cached) => {
-      const network = fetch(request)
-        .then((res) => {
-          if (res && res.status === 200 && res.type === 'basic') {
-            const copy = res.clone();
-            caches.open(CACHE).then((c) => c.put(request, copy));
-          }
-          return res;
-        })
-        .catch(() => cached);
+      const network = fetch(request).then((res) => stash(request, res)).catch(() => cached);
       return cached ?? network;
     }),
   );

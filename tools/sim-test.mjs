@@ -754,6 +754,26 @@ console.log('\n--- 20. the offline bundle is complete ---');
 
   // A changed bundle with an unchanged cache name serves the old one forever.
   check('the cache name is versioned', /const CACHE = 'laststand-v\d+'/.test(sw));
+
+  // App code has to go network-first alongside the shell, or a deploy serves a
+  // new index.html against an old cached bundle. Pull the actual classifier out
+  // of the worker and run it over the real paths, sub-directory and all.
+  const m = sw.match(/const isAppCode = sameOrigin && (\/.*\/)\.test\(url\.pathname\);/);
+  check('the worker classifies app code with a regex', !!m);
+  if (m) {
+    const isAppCode = new RegExp(m[1].slice(1, -1));
+    const base = '/last-stand';   // GitHub Pages serves the repo from a subpath
+    const codeMissed = onDisk.filter((f) => !isAppCode.test(`${base}/src/${f}`));
+    check('every src file is treated as app code', codeMissed.length === 0,
+      `missed: ${codeMissed.join(', ')}`);
+
+    const immutable = ['/fonts/barlow-400.woff2', '/icons/icon-192.png', '/manifest.webmanifest'];
+    const wrong = immutable.filter((p) => isAppCode.test(base + p));
+    check('fonts, icons and the manifest stay cache-first', wrong.length === 0,
+      `wrongly network-first: ${wrong.join(', ')}`);
+    check('it also works when served from the domain root',
+      isAppCode.test('/src/main.js') && !isAppCode.test('/fonts/barlow-400.woff2'));
+  }
 }
 
 console.log('\n--- 21. the camera ---');
